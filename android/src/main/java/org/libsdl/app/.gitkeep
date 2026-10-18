@@ -1,0 +1,5 @@
+# PLACEHOLDER — NOT real SDL sources.
+# Copy the following from your pinned libsdl-org/SDL checkout into THIS dir before building:
+#   $<sdl>/android/src/org/libsdl/app/*.java   (at minimum SDLActivity.java + SDLSurfaceView.java)
+# See android/README.md §1 for details. HerculesActivity extends org.libsdl.app.SDLActivity, so this
+# directory must contain the real sources or the build fails to resolve that import.

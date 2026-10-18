@@ -17,7 +17,7 @@ platformową (rendering 1080p, 16:9, HD sprite'y, launcher).
 
 | Element | Realizacja w tym repozytorium |
 |---|---|
-| Framework | `port/psxrecomp` — submodule **RetroPortingToolKit/psxrecomp** (fork psxrecomp mstana), statyczny recompiler MIPS→C + runtime SDL3/SDL2 + renderer OpenGL 3.3 core / Vulkan |
+| Framework | `port/psxrecomp` — submodule **RetroPortingToolKit/psxrecomp** (fork psxrecomp), statyczny recompiler MIPS→C + runtime SDL3/SDL2 + renderer OpenGL 3.3 core / Vulkan |
 | Typ budowy | AOT: emiter `psxrecomp-game` generuje pliki C (`generated/*.c`) → kompilacja na x64; **na Androida trzeba przeprofilować pod arm64** |
 | Okno/renderer | `runtime/src/main.cpp` → `SDL_CreateWindow`, renderer OpenGL: `gpu_gl_renderer.c` (**desktop GL 3.3 core**, nie ES); Vulkan: `gpu_vk_renderer.c` (łowany dynamicznie) |
 | SDL | domyślnie **SDL3**, przełącznik `-DPSX_SDL_BACKEND=SDL2` |
@@ -52,7 +52,7 @@ platformową: rendering 1080p, 16:9, HD sprite'y, launcher.
 
 | Element | Realizacja w tym repozytorium |
 |---|---|
-| Framework | `port/psxrecomp` — submodule **RetroPortingToolKit/psxrecomp** (fork psxrecomp mstana), statyczny recompiler MIPS→C + runtime SDL3/SDL2 + renderer OpenGL 3.3 core / Vulkan |
+| Framework | `port/psxrecomp` — submodule **RetroPortingToolKit/psxrecomp** (fork psxrecomp), statyczny recompiler MIPS→C + runtime SDL3/SDL2 + renderer OpenGL 3.3 core / Vulkan |
 | Typ budowy | AOT: emiter `psxrecomp-game` generuje pliki C (`generated/*.c`) → kompilacja na x64; **na Androida przeprofilowujemy pod arm64** |
 | Okno/renderer | `runtime/src/main.cpp` → `SDL_CreateWindow`, renderer OpenGL: `gpu_gl_renderer.c` (**desktop GL 3.3 core**, nie ES); Vulkan: `gpu_vk_renderer.c` (łowany dynamicznie) |
 | SDL | domyślnie **SDL3**, przełącznik `-DPSX_SDL_BACKEND=SDL2` |
@@ -76,7 +76,7 @@ Analiza oparta na rzeczywistym drzewie `port/psxrecomp` (commit `2a4824fc`). Wej
 | Inicjalizacja subsystemów | `main.cpp` ~L19175 / L17391 | — | `SDL_Init(SDL_INIT_VIDEO \| SDL_INIT_GAMECONTROLLER)`; audio osobno (subsystem audio) |
 
 **Renderer OpenGL (desktop).** `runtime/src/gpu_gl_renderer.c` (~668 KB): GL 3.x core + FBO + shadery z
-dynamicznym łoadeniem entrypointów (`load_modern_gl()` — wskaźniki `PFN_*`, np. `glCreateProgram`). Rasteryzacja
+dynamicznym łowieniu entrypointów (`load_modern_gl()` — wskaźniki `PFN_*`, np. `glCreateProgram`). Rasteryzacja
 rysuje VRAM PSX jako teksturalne kwady; prezentacja przez FBO + shader present/interpolation
 (`build_program(PRESENT_VS, PRESENT_FS)`). **To jest OpenGL desktopowy — nie ES.**
 
@@ -87,7 +87,7 @@ najłatwiejsza ścieżka portowa na Androida (jeśli device ma Vulkan ICD), bo o
 **Fuzja SDL2/SDL3.** Jedno miejsce mostkujące API: `runtime/include/psx_sdl.h` (`#if defined(PSX_SDL3)` z makrami
 aliasującymi; L237‑274). Tutaj trzeba dodać EGL/GLES + audio pod Androida.
 
-**Punkt wstrynięcia inputu (dotyk/BT).** `runtime/src/pad_external_input.h` → `PadExtHooks.capture_local()`
+**Punkt wstrzyjecia inputu (dotyk/BT).** `runtime/src/pad_external_input.h` → `PadExtHooks.capture_local()`
 (`main.cpp::capture_local_human_pad`, ~L6365) — jedyna oficjalna furtka do symulowania padu; blokowana przez
 `PadExtGate` (netplay/rewind/save).
 
@@ -177,7 +177,7 @@ Vulkan przez NDK; `PSX_ENABLE_VULKAN=ON` omija cały ten mechanizm.
 | Biblioteka | Pakiet systemowy Androida | Gdzie użyta |
 |---|---|---|
 | `liblog` (`-llog`) | system | logi JNI/runtime, tag `Hercules` w `adb logcat -s Hercules` |
-| `libandroid` (`-laNDroid`) | system | eventy okna/AInputQueue, lifecycle Activity |
+| `libandroid` (`-landroid`) | system | eventy okna/AInputQueue, lifecycle Activity |
 | EGL / **GLESv3** (`-lEGL -lglesv3`) | system (sofc) | renderer OpenGL ES 3.0 (ścieżka alternatywna) |
 | Vulkan (`libvulkan.so`, dynamiczne) | system SoC/ICD | **renderer primary** (`gpu_vk_renderer.c`) |
 | OpenSL_ES / **AAudio** (`-lOpenSL_ES` / `-laaudio`) | system | audio PSX (SPU) — AAudio zalecane dla niskiego opóźnienia |
@@ -233,7 +233,7 @@ hercules-recompiled/android/
         │   ├── SDLActivity.java      (+ SDLNativeLib, SDLJoystickDevice…)  — kopiujemy/pinujemy
         │   └── SDLSurfaceView…       (opcjonalnie: widok nakładkowy nad SurfaceView)
         ├── java/com/example/hercules/
-        │   ├── HerculesGameView.java   # widok + wstrzynięcie inputu dotykowego (D‑pad na ekranie)
+        │   ├── HerculesGameView.java   # widok + wstrzyjecia inputu dotykowego (D‑pad na ekranie)
         │   └── HerculesActivity.java     # Activity dziedziczący SDLActivity; ładuje libhercules.so
         ├── res/
         │   ├── layout/activity_main.xml  # SurfaceView + nakładka D‑pada / przycisków akcji (FrameLayout)
@@ -276,9 +276,9 @@ zamiast tego:
   reaguje na nie zamiast na `SDL_WINDOW_RESIZABLE`. Utrzymuj `android:renderedAsTexture=false`, by SurfaceView
   nie blokował inputu z kontrolera.
 
-### 2.3 Sterowanie ekranowe (Touch / On‑screen D‑pad) — punkt wstrynięcia dowodowy
+### 2.3 Sterowanie ekranowe (Touch / On‑screen D‑pad) — punkt wstrzyjecia dowodowy
 
-- **Punkt wstrynięcia:** jedyna oficjalna furtka do symulowania padu to
+- **Punkt wstrzyjecia:** jedyna oficjalna furtka do symulowania padu to
   `PadExtHooks.capture_local()` — w frameworku powiązana z `main.cpp::capture_local_human_pad` →
   `capture_pad_slot(s, out, guarded)` (rejestracja hooków: `pad_ext_main_hooks()`, L7045‑7057).
 
@@ -300,7 +300,7 @@ zamiast tego:
   ```
   **Wniosek dla Androida:** dodajemy własny zbiór hooków `pad_ext_android_main_hooks()` (kopia tabeli z L7045)
   gdzie `capture_local` czyta stan wirtualnego D‑pada utrzymowany przez JNI. Na wątku gry/main‑thread — framework
-  blokuje wstrzynięcie, gdy aktywna jest tarcza:
+  blokuje wstrzyjecia, gdy aktywna jest tarcza:
 
 - **Gate (kiedy input się liczy):** `pad_ext_live(const PadExtGate *g)` z `src/pad_external_input.c`
   (`!injected_input && !headless && !netplay_active && !rewind_open && !savestate_menu_open && !input_guard …`).
@@ -363,7 +363,7 @@ target_include_directories(herules PRIVATE ${PSXRECOMP_ROOT}/runtime/include ${C
 # systemowe biblioteki Androida — patrz Moduł 1.8 / Moduł 3 (log, android, EGL/glesv3/OpenSL_ES/AAudio, z)
 ```
 
-**`HerculesGameView.java` — szkic wstrynięcia D‑pada:**
+**`HerculesGameView.java` — szkic wstrzyjecia D‑pada:**
 ```java
 class HerculesGameView extends SurfaceView implements OnTouchListener { /* nakładka D‑pad */ }
 // down/move/up → mapuj na cyfry PSX → JniBridge.setTouchPad(buttons, lx, ly) → natywka podaje capture_local()
@@ -430,7 +430,7 @@ add_subdirectory("${HERCULES_PORT}" hercules_build EXCLUDE_FROM_ALL)
 # --- Biblioteki systemowe Androida — patrz Moduł 1.8; framework ich NIE zna na desktopie ---
 target_link_libraries(psx-runtime PRIVATE
     log          # -llog        : logi JNI/runtime (tag `Hercules` w adb logcat)
-    android      # -laNDroid    : eventy okna / AInputQueue
+    android      # -landroid    : eventy okna / AInputQueue
     EGL          # -lEGL        : powierzchnia pod GLES (ścieżka alternatywna)
     glesv3       # -lglesv3     : renderer OpenGL ES 3.0
     OpenSL_ES    # -lOpenSL_ES  : audio PSX (SPU); lub AAudio dla niskiego opóźnienia

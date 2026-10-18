@@ -1,0 +1,5 @@
+// Root build file for the Android port of Hercules Recompiled.
+//
+// NOTE: This project uses the modern AGP 8.x "plugins {}" DSL, so there is no
+// global buildscript block to maintain here. Plugin versions are declared in
+// app/build.gradle. Nothing else needs to live at this level for the port.

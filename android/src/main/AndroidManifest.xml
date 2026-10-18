@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Manifest for the Hercules Android port.
+  - Package is inferred from app/build.gradle `namespace` (com.example.hercules), so component names are relative (.HerculesActivity).
+  - The game is widescreen (16:9) -> force landscape; handle config changes ourselves via SDLActivity.
+  - Scoped Storage + SAF => we do NOT need READ/WRITE_EXTERNAL_STORAGE to read the user-selected .cue/.bin.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:hasFragileUserData="true"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".HerculesActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:theme="@style/Theme.Hercules.Fullscreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

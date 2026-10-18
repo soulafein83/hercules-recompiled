@@ -1,0 +1,59 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace = "com.example.hercules"          // musi zgadzać się z Java package + manifest
+    compileSdk  = 34
+
+    defaultConfig {
+        applicationId   = "com.example.hercules" // jedno identyfikator aplikacji (patrz android/README.md)
+        minSdk          = 24                     // Vulkan ICD wymaga API 24+ (Scoped Storage); patrz Moduł 3.4
+        targetSdk       = 34
+        versionCode     = 1
+        versionName     = "0.1.0"
+
+        externalNativeBuild {
+            cmake {
+                // AGP automatycznie podaje toolchain NDK; flagi wyżej z `-D` są opcjonalne przy buildzie przez CLI.
+                arguments << "-DCMAKE_TOOLCHAIN_FILE=${ndk}/build/cmake/android.toolchain.cmake"
+                args      << "-DANDROID_ABI=arm64-v8a"          // JEDYNE ABI w paczce (patrz Moduł 3)
+                args      << "-DHERCULES_PORT=${projectDir}/../../port"
+                args      << "-DHERCULES_VERSION=SCES-00893"    // wersa gry (patrz Moduł 3.2)
+
+                // Vulkan jest primary; GLES ES to fallback przełączany flagą PSX_SDL_BACKEND=SDL2.
+                if (project.hasProperty("USE_GLES")) {
+                    args << "-DPSX_ENABLE_VULKAN=OFF"
+                    args << "-DPSX_SDL_BACKEND=SDL2"
+                } else {
+                    args << "-DPSX_ENABLE_VULKAN=ON"
+                }
+            }
+        }
+
+        // Otnij pozostałe ABI — tylko arm64-v8a w finalnym APK/AAB.
+        ndk { abiFilters = ["arm64-v8a"] }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    // Uwaga: SDLActivity.java kopiujemy z PINNED checkoutu libsdl-org/SDL (patrz android/README.md),
+    // a nie jako zależność Maven — framework psxrecomp NIE dostarcza android/. Brak zależności poniżej.
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Colors for the placeholder launcher icon. Replace with real brand colors in the final port. -->
+<resources>
+    <color name="ic_launcher_background">#FF1B1F2A</color>
+</resources>

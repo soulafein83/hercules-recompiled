@@ -1,0 +1,7 @@
+# Copy this file to `local.properties` and fill in the paths on YOUR machine.
+# DO NOT commit local.properties — it holds machine-specific absolute paths.
+#
+# The Android Gradle plugin reads these automatically; you usually only need sdk.dir,
+# but ndk.dir is handy when several NDKs are installed side by side.
+sdk.dir=/absolute/path/to/Android/Sdk
+ndk.dir=/absolute/path/to/Android/Sdk/ndk/27.0.12077973

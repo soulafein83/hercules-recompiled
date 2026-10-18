@@ -1,0 +1,12 @@
+# Machine-local paths (absolute) — never commit.
+/local.properties
+
+# Gradle / build output
+/.gradle/
+/app/build/
+/app/.externalNativeBuild/
+/build/
+
+# Artifacts that may be shipped for testing
+*.apk
+*.aab
