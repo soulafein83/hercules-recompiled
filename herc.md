@@ -517,12 +517,40 @@ cmake --build build-android-arm64 --target psx-runtime
 ### 4.1 Wskazywanie obrazu płyty (.cue / .bin) przez Scoped Storage + SAF
 
 Od Androida 10 (API 29+) aplikacja **nie ma** dostępu do dowolnego pliku z pamięci masowej — trzeba
-wybrać go przez **Storage Access Framework (SAF)**. Runtime psxrecomp już potrafi przyjąć dowolną ścieżkę:
-`game.toml [runtime] disc`, argument `--disc`, cache `disc.cfg`, picker launchera i okno wyboru pierwszej
-uruchomienia — wszystkie przechodzą przez `resolve_disc_path()` (`disc_path.h`).
+wybrać go przez **Storage Access Framework (SAF)**. Runtime psxrecomp już potrafi przyjąć ścieżkę, jaka jest
+przekazana: `game.toml [runtime] disc`, argument `--disc`, cache `disc.cfg`, picker launchera i okno wyboru
+pierwszej uruchomienia — wszystkie przechodzą przez `resolve_disc_path()` (`disc_path.h`).
 
-- **Picker:** wywołujemy `Intent.ACTION_OPEN_DOCUMENT` (MIME `*/*`) z filtrem na `.cue`/`.bin`; użytkownik
-  wybiera `.cue` dumpa SCES‑00893. Zwracamy `documentId` i zapisujemy trwały dostęp:
+- **Punkt centralny:** `DiscPathResolution resolve_disc_path(const std::filesystem::path& picked)` (L51). Zwraca
+  strukturę `{picked, mount, data}` z flagami `from_cue` / `upgraded_to_cue` / `cue_fallback`. Zasada:
+  **„preferuj .cue, ale nigdy go nie wymagaj”**:
+
+  ```text
+  wybrano .cue -> montuje cue (zachowuje TOC/CD-DA)
+  wybrano .cue z brakującym bin -> montuje sąsiedni obraz, jeśli istnieje
+  wybrano surowy .bin/.iso/.img owned przez cue -> montuje ten cue
+  wybrano surowy .bin/.iso bez cue -> montuje bezpośrednio
+  wybrano .chd -> montuje bezpośrednio (TOC wbudowany)
+  ```
+
+- **Weryfikacja:** framework porównuje digesty z `[prepare_disc]` game.toml; czytane są bajty z pliku `data`
+  (zawiera header ISO9660 + SYSTEM.CNF), więc werdykt „Disc verified” jest stabilny niezależnie od tego, czy
+  gracz wybrał `.cue`, czy surowy `.bin`. Dla SCES‑00893 (`Disneys Hercules Action-Spiel (Germany)`) w
+  `port/game.toml`:
+
+  ```toml
+  [runtime]
+  disc = "disc/Disneys Hercules Action-Spiel (Germany).cue"   # domyslna sciezka gry
+  memcard_dir = "saves"                                        # katalog stanow zapisu
+
+  [prepare_disc]                                               # SCES-00893, boot_exe=SCES_008.93
+  known_md5 = ["ec808ac8484dbc50e56866c1fdff3132"]
+  known_sha1 = ["a67a615f979fb3b4108fd4c75018ac9ebb960d2f"]
+  known_crc32 = ["9a51eebf"]
+  ```
+
+- **Picker SAF:** `Intent.ACTION_OPEN_DOCUMENT` (MIME `*/*`) z filtrem na `.cue`/`.bin`; użytkownik wybiera
+  `.cue` dumpa SCES‑00893. Zwracamy `documentId` i zapisujemy traly dostęp:
 
   ```java
   getContentResolver().persistTreePermission(uri,
@@ -531,30 +559,34 @@ uruchomienia — wszystkie przechodzą przez `resolve_disc_path()` (`disc_path.h
       ContentResolver.FLAG_GRANT_WRITE_URI_PERMISSION);
   ```
 
-- **Mount:** musimy dostarczyć natywne czytelny strumień z `DocumentFile`/`openInputStream()` i podać go do
-  ISO9660 loadera (`cdrom.c`). Najprościej: odczytać fragment danych dysku do bufora pamięci (lub tymczaso‑
-  wy plik w cache) i przekazać ścieżkę; `resolve_disc_path` preferuje `.cue`, ale nigdy go nie wymaga.
-- **Weryfikacja:** framework sprawdza digesty (`[prepare_disc] known_md5/sha1/crc32` w game.toml — dla SCES‑00893:
-  md5 `ec808ac8484dbc50e56866c1fdff3132`, CRC32 `9a51eebf`). Działa identycznie z SAF, bo czyta te same bajty.
+- **Mount:** natywne wejście `cdrom_init(const char* cue_path)` (`cdrom.c` L2802) montuje ISO9660. Musimy
+  dostarczyć czytelny strumień z `DocumentFile`/`openInputStream()`; najprościej odczytać dane do bufora (lub
+  pliku w cache) i przekazać sciezke — loader czyta te same bajty niezależnie od zrodla.
 
-### 4.2 Ścieżki danych aplikacji (zapisy + save states)
+### 4.2 Ścieżki danych aplikacji (zapisy + save states) — dowód z kodu
 
-| Dane | Ścieżka na Androidu | Mechanizm |
+`memcard_dir` rozwiązywany jest w `main.cpp` i **kotwiczony do katalogu exe** (`anchor_on_exe_dir`, L16941;
+alternatywnie `gc.runtime.memcard_dir`, L16269). Save states trzymają się tego katalogu (pod tokenem BIOS):
+
+| Dane | Sciezka na Androidu | Mechanizm / dowód z kodu |
 |---|---|---|
-| Save states / memcard | `getFilesDir()/saves/` **lub** `/sdcard/Android/data/com.example.hercules/files/saves/` | `[runtime] memcard_dir = "saves"` (game.toml); runtime robi `create_directories(memcard_dir)` (~L17081). Druga ścieżka (`files/`) nie wymaga permusji storage. |
-| Konfiguracja dysku / keybindy | `disc.cfg`, `disc-<id>.cfg`, `keybinds.ini` — w `memcard_dir` (obok exe) | Te same pliki co na desktopie; zapisywane przy wyborze dysku i edycji klawiszy. |
-| Save state slot + HD miniatury | `<save>/savestate/<slot>.psp`, `.thumb.png`, HD path | `savestate_slot_path()` / `savestate_thumb_path()` (`savestate.c`). F7/Select+R1 otwiera menu 12 slotów. |
-| Zasoby HD (HD texture packs) | `/sdcard/Android/data/com.example.hercules/files/cache/hd/` **lub** internal cache dir | Paki ~1,6 GB; pobierane z release `hd-packs`, weryfikowane SHA256SUMS. Brak packa → generowanie z dysku (patrz niżej). |
+| Save state slot | `<memcard_dir>/<bios_token>/state_%08X_slot%02d.pst` | `savestate_slot_path(int slot, char* out, size_t cap)` -> `.pst`, L496-503. Slot kotwiczony przez entry_pc — stany roznych gier se nie zlewaja; boot_state_load odrzuja niezgodny entry_pc |
+| Miniatura HD slotu | `..._slot%02d.thumb` | savestate_thumb_path() L507-513; rysowana przez savestate_capture_thumb() (L591) |
+| Rezydencja packa HD | `..._slot%02d.hdres` | sidecar obok slotu, NIE w .pst (stany sa niezależne od renderera), L518-525 |
+| Memory card / save gry | `<memcard_dir>/saves/` (lub `/sdcard/Android/data/com.example.hercules/files/saves/`) | `[runtime] memcard_dir = "saves"`; runtime robi create_directories(memcard_dir). Katalog files/ nie wymaga permusji storage |
+| Konf. dysku / keybindy | `disc.cfg`, `disc-<id>.cfg`, `keybinds.ini` — w memcard_dir | Te same pliki co na desktopie; zapisywane przy wyborze dysku i edycji klawiszy |
 
-Zalecenie: użyć **własnego katalogu app** (`getExternalFilesDir(null)` / `getFilesDir()`), by nie wymagać
-`MANIFEST_EXTERNAL_STORAGE` ani runtime‑permusji na Androidzie 13+. HD cache trzymać w `getCodeCacheDir()`.
+**Ile slotów:** `SAVESTATE_SLOTS = 12` (`savestate.h` L25) → menu otwiera się F7 / Select+R1.
+
+**Zalecenie dla Androida:** użyć własnego katalogu app — `getExternalFilesDir(null)` / `getFilesDir()` — by nie
+wymagać `MANIFEST_EXTERNAL_STORAGE` ani permusji runtime na 13+. HD cache trzymać w `getCodeCacheDir()`.
 
 ### 4.3 Generowanie zasobów HD z dysku (mobile)
 
 - Launcher (`launcher_native/hl_launcher.cpp`) po pierwszej grze prosi o pobranie packa HD; jeśli nie ma go
-  dla SCES‑00893, generuje **z dysku gracza** w tle (~4 h na CPU laptopa → na telefonie wolniej).
+  dla SCES‑00893, generuje **z dysku gracza** w tle (~4 h na CPU laptopa -> na telefonie wolniej).
 - Na Androidzie ten etap wymaga Pythona z torch/spandrel + trzech modeli (IllustrationJaNai, HDcube) — **nie jest
-  wymagany do gry w oryginalnej jakości**. Do podstawowego portu wystarczy: wybór dysku przez SAF + gra.
+  wymagany do gry w_originalnej jakości**. Do podstawowego portu wystarczy: wybór dysku przez SAF + gra.
 - Narzędzia decomp (`decomp/tools/hd_pack_build.py` i podmoduły `iso_extract.py`, `sprites.py`, …) działają z
   dysku; na Androida najlepiej wywołać je **na hoście** i wgrać gotowy pack do cache app.
 
@@ -562,26 +594,55 @@ Zalecenie: użyć **własnego katalogu app** (`getExternalFilesDir(null)` / `get
 
 ## Moduł 5: Skrypt Budujący i Generowanie APK
 
-### 5.1 Wymaganie wstępne — wygenerowanie `generated/*.c` na hoście (Moduł 1.5)
+### 5.1 Wymaganie wstępne — generowanie `generated/*.c` na hoście (Moduł 1.5)
 
-APK nie zbudujemy bez skompilowanego silnika gry. Najpierw, na hoście:
+APK nie zbudujemy bez skompilowanego silnika gry. Najpierw, na hoście, wygeneruj pliki C gry oraz emiter AOT.
+
+**AOT emittery.** build_emitters.sh konfiguruje i buduje `psxrecomp-game` + `psxrecomp-bios` z katalogu recompiler
+(`-S port/psxrecomp/recompiler -B build-recompiler`, Ninja, Release):
 
 ```sh
-git clone --recursive https://github.com/obaidr1/hercules-recompiled && cd hercules-recompiled/port
+# (z korzenia repozytorium) git clone --recursive … hercules-recompiled && cd hercules-recompiled/port
 cd psxrecomp && for p in ../patches/psxrecomp/*.patch; do git apply "$p"; done && cd ..
-mkdir -p disc && cp "disco/Disneys Hercules Action-Spiel (Germany).cue" \
-               "disco/Disneys Hercules Action-Spiel (Germany).bin" disc/   # SCES-00893
-./psxrecomp/tools/ci/build_emitters.sh
-python3 psxrecomp/psxrecomp_cli.py generate --config game.toml --project-root . \
-    --disc "disc/Disneys Hercules Action-Spiel (Germany).cue"
+./psxrecomp/tools/ci/build_emitters.sh            # flagi: [--framework psxrecomp] [--build-dir build-recompiler] \
+                                                  #          [--toolchain-dir DIR] [--jobs N]; env PSXRECOMP_TOOLCHAIN_DIR
+# -> build-recompiler/psxrecomp-game + build-recompiler/psxrecomp-bios  (na Windowsie: static libc++, brak MSYS DLL)
 ```
+
+**Generowania kodu gry.** `generate` wymaga pliku konfiguracyjnego (`--config game.toml`, inaczej błąd usage); ścieżkę dysku
+możesz pominąć, bo SCES‑00893 ma ją w `[runtime] disc`. Skrypt aktywuje wbudowaną toolchainę i wypisuje `generated/`:
+
+```sh
+cd port
+mkdir -p disc && cp "../disco/Disneys Hercules Action-Spiel (Germany).cue" \
+                   "../disco/Disneys Hercules Action-Spiel (Germany).bin" disc/   # SCES-00893
+python3 psxrecomp/psxrecomp_cli.py generate --config game.toml --project-root . \
+    --disc "disc/Disneys Hercules Action-Spiel (Germany).cue"     # lub bez --disc: używa game.disc
+```
+
+**Warunek „release ready”.** check_generated.sh (CI) odrzuja paczkę, jeśli wygenerowany kod C **nie jest commitowany**:
+- `generated/<boot>_dispatch.c` musi istnieć oraz przynajmniej jeden shard `generated/<boot>_full*.c` obok niego
+  (<boot> = nazwa boot‑EXE z game.toml; SCES‑00893 → `SCES_008.93`, sprawdzane przez check_boot_exe.sh);
+- pliki muszą być **commitowane w git** — niecommitowana `generated/` buduje się na maszynie developera, ale jest
+  nieobecna w CI checkoutie (stąd „red release”);
+- backend BIOS frameworku musi być obecny (`psxrecomp/generated/OpenBIOS_{full,dispatch}.c` + plik stampa
+  `.emitter.sha`); stampa stamperów BIOS (`PSXRECOMP_BIOS_STALE_FATAL`) odrzuja nieaktualny stamp w CI.
 
 ### 5.2 Budowanie APK przez Gradle Wrapper
 
-Z korzenia repozytorium (`android/` jest w `android/`, wrapper `gradlew` tam też):
+**Wrapper: tworzymy go sami.** W repozytorium **nie ma jeszcze `gradlew` ani katalogu `android/`** — androidowa
+warstwa jest nowa (pole zielone). Utwórz wrapper jednym poleceniem (Gradle 8.x/10.x):
 
 ```sh
-# Debug — szybki, self-signed signaturą, do testów:
+cd android
+gradle wrapper --gradle-version 8.10        # generuje gradlew, gradlew.bat + gradle/wrapper/gradle-wrapper.jar/.properties
+# jeśli nie masz globalnego Gradle: skopiuj gradlew z szablonu libsdl-org/SDL/android lub innego projektu Androida
+```
+
+Z korzenia androida:
+
+```sh
+# Debug — szybki, podpisany self‑signaturą, do testów:
 ./gradlew assembleDebug
 
 # Release — wymaga podpisu (patrz 5.4); dla sklepu / dystrybucji:
@@ -592,12 +653,11 @@ Wynik:
 - `android/app/build/outputs/apk/debug/app-debug.apk`
 - `android/app/build/outputs/apk/release/app-release-signed.apk`
 
-Wskazówki budowy:
-- Ustaw `local.properties` → `sdk.dir=<ANDROID_HOME>` (nie commitować) i `gradle.properties`:
+Wskazówki budowy (patrz Moduł 3.4):
+- Ustaw `local.properties` → `sdk.dir=<ANDROID_HOME>` (nie commitować) oraz `gradle.properties`:
   `ndk.dir=<ANDROID_NDK_HOME>`, `android.useAndroidX=true`.
-- Do debugu z włączonym Vulkan: `-DPSX_ENABLE_VULKAN=ON`; dla GLES ES — zostaw domyślnie, a `-DPSX_SDL_BACKEND=SDL2`.
-- Optymalizacja wielkości APK: w `app/build.gradle` `splits { abi { enable true } }` + tylko `arm64-v8a`
-  (patrz Moduł 3.4) → mniejszy `.aab`/`.apk`.
+- Debug z Vulkan: `-DPSX_ENABLE_VULKAN=ON`; dla GLES ES zostaw domyślnie, a `-DPSX_SDL_BACKEND=SDL2`.
+- Optymalizacja wielkości APK: `splits { abi { enable true } }` + tylko `arm64-v8a` → mniejszy `.aab`/`.apk`.
 
 ### 5.3 Instalacja i debugowanie na urządzeniu
 
@@ -605,18 +665,18 @@ Wskazówki budowy:
 # Włączenie debugowania USB w ustawieniach developera; urządzenie widoczne:
 adb devices
 
-# Instal APK debug:
+# Instal APK debug (-r = replace):
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
-# Uruchomienie aktywności (bez klikania ikony):
-adb shell am start -n com.example.hercules/.SDLActivity
+# Uruchomienie aktywności (bez klikania ikony) — podlega SAF, patrz Moduł 4.1:
+adb shell am start -n com.example.hercules/.HerculesActivity
 
-# Podgląd logów — filtr po tagu "Hercules" (tak jak w poleceniu):
+# Podgląd logów — filtr po tagu „Hercules” (jak w poleceniu):
 adb logcat -s Hercules
 ```
 
-Podczas pierwszego uruchomienia launcher poprosi o wybór dysku `.cue` SCES‑00893 przez SAF; po wyborze
-zapamięta go (`disc.cfg`) i przejdnie bezpośrednio do wybranego poziomu.
+Podczas pierwszego uruchomienia launcher poprosi o wybór dysku `.cue` SCES‑00893 przez SAF; po wyborze zapamięta go
+(`disc.cfg`) i przejdnie bezpośrednio do wybranego poziomu.
 
 ### 5.4 Podpisywanie APK release (opcjonalnie)
 
@@ -624,15 +684,16 @@ zapamięta go (`disc.cfg`) i przejdnie bezpośrednio do wybranego poziomu.
 keytool -genkeypair -v -keystore hercules.keystore \
     -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
     -alias hercules
-./gradlew assembleRelease -Pandroid.signing.store=/path/hercules.keystore \
-    -Pandroid.signing.store.password=... -Pandroid.signing.key.password=... \
-    -Pandroid.signing.key.alias=hercules
+# podpisany build przez Android Studio (Automatic signing) lub manualnie w app/build.gradle:
+#   signingConfigs { release { storeFile=…; storePassword=…; keyAlias=…; keyPassword=… } }
+#     defaultConfig.signingConfiguration = signingConfigs.release
+./gradlew assembleRelease
 adb install -r android/app/build/outputs/apk/release/app-release-signed.apk
 ```
 
 ### 5.5 Checklist końcowa portu (podsumowanie modułów)
 
-- [ ] **M1** — wybrany renderer Vulkan (primary) lub GLES 3.0; biblioteki systemowe z Modułu 1.4.
+- [ ] **M1** — wybrany renderer Vulkan (primary) GLES 3.0; biblioteki systemowe z Modułu 1.4.
 - [ ] **M2** — `SDLActivity` z libsdl‑org/SDL pod Androidem; D‑pad mapowany na `PadExtHooks.capture_local`.
 - [ ] **M3** — arm64‑v8a, toolchain NDK, `-lglesv3/-lEGL/OpenSL_ES/log/android/z`, ABI wycięte do samej arm64.
 - [ ] **M4** — SAF picker `.cue/.bin` z `persistTreePermission`; saves w katalogu app; cache HD.
