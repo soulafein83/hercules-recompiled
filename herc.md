@@ -211,69 +211,174 @@ identyczna.
 
 ## Moduł 2: Konfiguracja Warstwy Androida (JNI / SDL3 Activity)
 
-### 2.1 Struktura katalogu `android/`
+### 2.1 Struktura katalogu `android/` — nowe scaffolding Gradle
 
-Tworzymy ją w korzeniu repozytorium, obok `port/`. To standardowy projekt Gradle dla aplikacji
-Android + biblioteki natywnej (`*.so`).
+Tworzymy ją w korzeniu repozytorium, obok `port/`. To standardowy projekt Gradle aplikacji
+Android + biblioteki natywnej (`*.so`). **Cała ta struktura jest nowa** (framework psxrecomp nie ma
+`android/`) — kopiujemy z niego tylko aktywność SDL.
 
 ```
 hercules-recompiled/android/
-├── settings.gradle                 # projekty app + native-lib
+├── settings.gradle                 # projekty app + native-lib (include ':app')
 ├── build.gradle                    # wersje pluginów/SDK (repozytoria, zależności)
-├── gradle.properties               # ndk.dir, android.useAndroidX=true
-├── gradlew / gradlew.bat           # Gradle Wrapper (10.x)
-├── local.properties                # sdk.dir=<ANDROID_HOME>  (nie commitować!)
+├── gradle.properties               # ndk.dir, android.useAndroidX=true, org.gradle.jvmargs
+├── gradlew / gradlew.bat           # Gradle Wrapper 10.x
+├── local.properties                # sdk.dir=<ANDROID_HOME>   (NIE commitować!)
 └── app/
-    ├── build.gradle
+    ├── build.gradle                # ndk.abiFilters=arm64-v8a, SDL3 dep, CMake natywny
     ├── proguard-rules.pro
     └── src/main/
         ├── AndroidManifest.xml     # <application android:hasFragileUserData>, storage perms
-        ├── java/org/libsdl/app/    # SDL3Activity (oficjalny z libsdl-org/SDL) — kopiujemy/pinujemy
-        │   └── SDLActivity.java  (+ SDLNativeLib, SDLJoystickDevice …)
+        ├── java/org/libsdl/app/    # aktywność z oficjalnego checkoutu libsdl-org/SDL (pinned)
+        │   ├── SDLActivity.java      (+ SDLNativeLib, SDLJoystickDevice…)  — kopiujemy/pinujemy
+        │   └── SDLSurfaceView…       (opcjonalnie: widok nakładkowy nad SurfaceView)
         ├── java/com/example/hercules/
-        │   └── HerculesGameView.java   # widok + wstrzynięcie inputu dotykowego (D-pad na ekranie)
+        │   ├── HerculesGameView.java   # widok + wstrzynięcie inputu dotykowego (D‑pad na ekranie)
+        │   └── HerculesActivity.java     # Activity dziedziczący SDLActivity; ładuje libhercules.so
         ├── res/
-        │   ├── layout/activity_main.xml  # SurfaceView + nakładka D‑pada / przycisków akcji
-        │   ├── values/strings.xml, styles.xml, themes.xml
+        │   ├── layout/activity_main.xml  # SurfaceView + nakładka D‑pada / przycisków akcji (FrameLayout)
+        │   ├── values/{strings,styles,themes}.xml
         │   └── drawable/*, mipmap/ic_launcher* …
         └── cpp/
-            ├── CMakeLists.txt           # buduje libhercules.so (patrz Moduł 3)
-            ├── android_main.cpp         # JNI: attach Activity → SDLActivity event loop
-            └── JniBridge.h/.cpp             # mapowanie gestów na PadExtHooks.capture_local
+            ├── CMakeLists.txt           # buduje libhercules.so (patrz Moduł 3 — ABI arm64-v8a)
+            ├── android_main.cpp         # JNI: attach Activity → event loop SDLActivity; podaje surface EGL
+            └── JniBridge.h/.cpp          # mapowanie gestów D‑pada na PadExtHooks.capture_local() (patrz 2.3/2.4)
 ```
 
-### 2.2 Integracja z `SDLActivity` jako kontenerem aplikacji
+**Pinned SDL — dlaczego pełny checkout.** Aktywność `SDLActivity.java` musi pochodzić z **pełnego
+checkoutu libsdl‑org/SDL** (musi mieć własne `android/` + Gradle + aktywność EGL). Desktopowy pinned SDL
+w FetchContent w tym repozytorium go nie dostarcza — na NDK się nie skompiluje. W `settings.gradle` pinujemy
+go np. przez Git submodule / Maven lokalny, by build był deterministyczny.
 
-Framework psxrecomp tworzy okno przez `SDL_CreateWindow`. Na Androida **nie chcemy** własnego okna —
+### 2.2 Integracja z `SDLActivity` jako kontenerem aplikacji — dowody z kodu
+
+Framework psxrecomp tworzy okno bezpośrednio przez `SDL_CreateWindow` (`main.cpp::SDL_CreateWindow`, ~L19265;
+flagi `SDL_WINDOW_OPENGL`/`SDL_WINDOW_VULKAN`). Na Androida **nie chcemy** własnego okna desktopowego —
 zamiast tego:
 
-- **Kopiujemy oficjalną aktywność z repo libsdl‑org/SDL** (musi to być pełny checkout SDL 3.1+, który
-  zawiera `android/` + `SDLActivity.java` oparty o EGL; desktopowy pinned SDL w FetchContent go nie ma).
-- `SDLActivity` dostarcza: powierzchnia EGL pod renderer, eventy okna do `AInputQueue`, audio przez SDL,
-  gamepad‑HIDAPI (Bluetooth) i joystick. Nasz `HerculesGameView` rozszerza `SurfaceView` i jest nakładką
-  nad nią; rysuje wirtualny D‑pad / przyciski akcji jako widoczne elementy UI Androida.
-- Aktywność ustawia natywne bibliotekę (`System.loadLibrary("hercules")`) i przekazuje `surface`, a runtime
-  psxrecomp tworzy kontekst Vulkan/GLES na podanej powierzchni zamiast wywoływać `SDL_CreateWindow`.
+- **Kopiujemy oficjalną aktywność z libsdl‑org/SDL.** `SDLActivity` dostarcza powierzchnia EGL pod renderer,
+  eventy okna wrzucone do `AInputQueue`, audio przez SDL i gamepad‑HIDAPI (Bluetooth) + joystick. Nasz
+  `HerculesGameView` rozszerza `SurfaceView`/nakładkę nad nią; rysuje wirtualny D‑pad / przyciski akcji jako
+  widoczne elementy UI Androida, a aktywność ładuje natywną bibliotekę (`System.loadLibrary("hercules")`).
 
-### 2.3 Sterowanie ekranowe (Touch / On‑screen D‑pad)
+- **Seam SDL3 — tu podpinamy EGL/GLES.** `runtime/include/psx_sdl.h` to jedné miejsce mostkujące API
+  (`#if defined(PSX_SDL3)`). Na Windowsie/desktopie wywołania idą przez wrapper:
+  ```c
+  static inline int psx_sdl_gl_make_current(SDL_Window*, SDL_GLContext);   // L106 → SDL_GL_MakeCurrent
+  static inline int psx_sdl_gl_set_swap_interval(int interval);            // L112 → SDL_GL_SetSwapInterval
+  static inline void psx_sdl_gl_get_drawable_size(SDL_Window*, int* w, int* h); // L117 → SDL_GetWindowSizeInPixels
+  ```
+  Na Androida **nie tworzymy okna** (`psx_sdl_create_window` nie bierze udziału) — runtime tworzy kontekst
+  Vulkan/GLES na powierzchni podanej przez `SDLActivity`. Dla Vulkanu wystarczy pobrać z niego powierzchnię:
+  `SDL_Vulkan_GetSurface(window, …)`; dla GLES — ustawić aktywny kontekst nad EGL‑powierzchnią widoku.
 
-- **Punkt wstrzynięcia:** `runtime/src/pad_external_input.h` → `PadExtHooks.capture_local()`
-  (`main.cpp::capture_local_human_pad`, ~L6365). To jedyna oficjalna furtka do symulowania inputu padu.
-- W Java/C++ implementujemy nakładkę D‑pada w `activity_main.xml`; gesty (down/move/up na obszarach ekranu)
-  mapujeme na cyfry PSX (D‑pad, ✕/○/□/△, L1/R1, Start/Select) i przekazujemy do natywki przez JNI.
-- `JniBridge` zbiera frame inputu (`uint8_t buttons`, float stick XY) i wywołuje `capture_local()`. Musi to
-  robić na wątku gry/main‑thread (framework blokuje wstrzynięcie podczas netplay/rewind/save).
-- Zalecane: zachować domyślnie cyfrowy (`[controller] default_mode = "digital"` z game.toml) i dodać tryb
-  analogowy dla lewego joysticka.
+- **Ruch eventów.** Eventy okna (resize/rotation/config) trafiają do natywki przez `AInputQueue`; runtime
+  reaguje na nie zamiast na `SDL_WINDOW_RESIZABLE`. Utrzymuj `android:renderedAsTexture=false`, by SurfaceView
+  nie blokował inputu z kontrolera.
 
-### 2.4 Wsparcie dla kontrolerów Bluetooth
+### 2.3 Sterowanie ekranowe (Touch / On‑screen D‑pad) — punkt wstrynięcia dowodowy
 
-- `SDLActivity` (z libsdl‑org/SDL) już enumeruje gamepady przez **HIDAPI** — parowanie BT działa z pudełka;
+- **Punkt wstrynięcia:** jedyna oficjalna furtka do symulowania padu to
+  `PadExtHooks.capture_local()` — w frameworku powiązana z `main.cpp::capture_local_human_pad` →
+  `capture_pad_slot(s, out, guarded)` (rejestracja hooków: `pad_ext_main_hooks()`, L7045‑7057).
+
+- **Kolejność rozwiązywania padu** (`src/pad_external_input.c::pad_ext_resolve()`):
+  ```c
+  int pad_ext_resolve(const PadExtHooks *h, int s, PsxNetPad *out) {   // L64‑93
+      const int guarded = h->guard_active ? h->guard_active(h->ctx) : 0;
+      const int has_source = h->source_sample && h->source_sample(...);
+      if (has_source && released) { ... return 1; }
+      if (has_source) {   // źródło offline narzuca przyciski; capture_local maskuje je
+          out->buttons &= local.buttons;            // L80: AND z fizycznym padem
+      } else if (!h->capture_local(h->ctx, s, out, guarded)) {  // L82: brak urządzenia → port wolny
+          return 0;
+      }
+      pad_ext_transform(h, s, guarded, has_source, out);   // transform tytułu (NeGcon/etc.)
+      ... mouse_fold / reset ...
+      return 1;
+  }
+  ```
+  **Wniosek dla Androida:** dodajemy własny zbiór hooków `pad_ext_android_main_hooks()` (kopia tabeli z L7045)
+  gdzie `capture_local` czyta stan wirtualnego D‑pada utrzymowany przez JNI. Na wątku gry/main‑thread — framework
+  blokuje wstrzynięcie, gdy aktywna jest tarcza:
+
+- **Gate (kiedy input się liczy):** `pad_ext_live(const PadExtGate *g)` z `src/pad_external_input.c`
+  (`!injected_input && !headless && !netplay_active && !rewind_open && !savestate_menu_open && !input_guard …`).
+  W tym oknie D‑pad na ekranie może nadpisywać port; poza nim framework trzyma stan (np. przy zapisie/rewindzie).
+
+- **Implementacja:** w `activity_main.xml` rysujemy nakładkę D‑pada / przycisków akcji (`FrameLayout` z
+  `SurfaceView` + overlay); gesty down/move/up na obszarach ekranu mapujemy na cyfry PSX (D‑pad, ✕/○/□/△,
+  L1/R1, Start/Select). `JniBridge` zbiera frame (`uint8_t buttons`, float stick XY) i aktualizuje stan odczytany
+  przez `capture_local()`. **Zalecane:** domyślnie tryb cyfrowy `[controller] default_mode = "digital"` (z game.toml),
+  plus analogowy lewy joystick.
+
+### 2.4 Wsparcie dla kontrolerów Bluetooth — dowody z kodu
+
+- `SDLActivity` (z libsdl‑org/SDL) enumeruje gamepady przez **HIDAPI** — parowanie BT działa z pudełka;
   wystarczy włączyć `[controller]` i podłaczyć urządzenie.
-- Framework mapuje osie/przyciski na PSX przez `pad_buttons_for/pad_sticks_for/axes_to_pad_pair`
-  (`main.cpp`). Na Androida upewnij się, że `SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER)` jest wywołane
-  (już tak jest w main.cpp ~L19175) oraz że `android:renderedAsTexture=false`, by SurfaceView nie blokowało inputu.
 
+- Fizyczny controller jest trzymany w `g_players[s].handle` (`SDL_GameController`) i mapowany na PSX:
+  ```c
+  SDL_GameController* handle = g_players[s].handle;         // main.cpp L7013
+  if (g_players[s].kind != 2 || !handle) return;            // tylko otwarty gamepad
+  *flags |= PSX_MOD_PAD_HOST_GAMEPAD;
+  if (SDL_GameControllerHasAxis(handle, SDL_CONTROLLER_AXIS_TRIGGERLEFT)) {      // L7016
+      *lt = psx_trigger_axis_to_u8(SDL_GameControllerGetAxis(...TRIGGERLEFT));   // osa spustu → u8
+  }
+  ```
+  Na Androida upewnij się: (1) `SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER)` jest wywołane
+  (już tak, main.cpp ~L19175); (2) aktywność nie blokuje inputu (`renderedAsTexture=false`).
+
+- **Precedencja na Androida:** gamepad fizyczny/BT ma wyższy priorytet niż D‑pad na ekranie — w `capture_local`
+  dla źródła zewnętrznego przyciski maskowane są przez AND (`out->buttons &= local.buttons`, L80), więc fizyczne
+  urządzenie decyduje o tym, które cyfry PSX są aktywne.
+
+### 2.5 Szablony plików — nowa struktura (fragmenty)
+
+**`settings.gradle`:**
+```gradle
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+rootProject.name = "hercules-recompiled"
+include ':app'
+```
+
+**`app/build.gradle` (fragment):**
+```gradle
+android { namespace 'com.example.hercules'; compileSdk 34; defaultConfig {
+    applicationId "com.example.hercules"; minSdk 21; targetSdk 34
+}
+buildFeatures { buildConfig true }
+// NDK natywne: tylko arm64-v8a (patrz Moduł 3)
+androidComponents.onVariants { variant ->
+    // abiFilters = ['arm64-v8a']; CMake toolchain wskazuje psxrecomp jako PSXRECOMP_ROOT
+}
+dependencies { implementation 'org.libsdl:sdl:3.1.x' }   // pinned pełny checkout SDL3 android/
+```
+
+**`src/main/cpp/CMakeLists.txt` (fragment):**
+```cmake
+add_library(hercules SHARED JniBridge.cpp)
+target_include_directories(herules PRIVATE ${PSXRECOMP_ROOT}/runtime/include ${CMAKE_CURRENT_SOURCE_DIR})
+# systemowe biblioteki Androida — patrz Moduł 1.8 / Moduł 3 (log, android, EGL/glesv3/OpenSL_ES/AAudio, z)
+```
+
+**`HerculesGameView.java` — szkic wstrynięcia D‑pada:**
+```java
+class HerculesGameView extends SurfaceView implements OnTouchListener { /* nakładka D‑pad */ }
+// down/move/up → mapuj na cyfry PSX → JniBridge.setTouchPad(buttons, lx, ly) → natywka podaje capture_local()
+```
+
+**`JniBridge.cpp — mostkowanie do PadExtHooks`:**
+```cpp
+extern "C" JNIEXPORT void JNICALL Java_com_example_hercules_JniBridge_setTouchPad(
+    JNIEnv* env, jobject thiz, jint buttons, jint lx, jint ly) {
+    // aktualizuje globalny stan wirtualnego D‑pada; main.cpp odczyta go w capture_local()
+}
+```
+
+> Uwaga: to scaffolding — framework psxrecomp nie dostarcza `android/`; powyższe pliki tworzymy od zera, a jedyna
+> część „uziemiona" w kodzie to seam SDL (`psx_sdl.h`) i hook inputu (`PadExtHooks.capture_local`, main.cpp L7045).
 ---
 
 ## Moduł 3: Konfiguracja Toolchaina CMake & NDK
