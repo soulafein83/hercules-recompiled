@@ -381,51 +381,76 @@ extern "C" JNIEXPORT void JNICALL Java_com_example_hercules_JniBridge_setTouchPa
 > część „uziemiona" w kodzie to seam SDL (`psx_sdl.h`) i hook inputu (`PadExtHooks.capture_local`, main.cpp L7045).
 ---
 
-## Moduł 3: Konfiguracja Toolchaina CMake & NDK
+## Moduł 3: Konfiguracja Toolchaina CMake & NDK (arm64‑v8a)
 
 ### 3.1 Wymagania środowiska (host)
 
 ```sh
-# Android NDK r26+ (z android-cmake), CMake ≥ 3.20, Ninja — z SDK Manager lub standalone NDK
+# Android NDK r27+ (z android-cmake), CMake ≥ 3.20, Ninja — SDK Manager lub standalone NDK
 export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
+# Vulkan SDK (dla glslc) TYLKO jeśli chcemy SPIR‑V; backend jest łowany dynamicznie → nieobowiązkowe
 ```
 
-### 3.2 Plik toolchaina NDK (`android/app/cpp/android.toolchain.cmake` — symlink do NDK)
+### 3.2 Jak framework buduje runtime — dowody z kodu (dlaczego tak konfigurujemy)
 
-NDK dostarcza gotowy plik: `<NDK>/build/cmake/android.toolchain.cmake`. My dodatkowo ustawiamy ABI i wersję
-API w CMakeLists/app. Nie piszemy toolchaina od zera — dziedziczymy ten z NDK (jak `toolchain-mingw-w64.cmake`
-dla Windowsa).
+Struktura `port/` decyduje o celach budowy:
 
-### 3.3 `android/app/cpp/CMakeLists.txt` (cel arm64‑v8a)
+- **`port/CMakeLists.txt`** (`cmake_minimum_required(VERSION 3.20)`): ustawia
+  `PSXRECOMP_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp"` (domyślnie submodule), a jeśli go brakuje —
+  `FATAL_ERROR` z instrukcją `git submodule update --init`. Potem `project(HerculesRecomp …)`,
+  `set(HERCULES_VERSION "SCES-00893")`, `include("hercules_game.cmake")`.
+- **`port/hercules_game.cmake`**: `include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")`, a potem
+  ```cmake
+  psxrecomp_add_game_runtime(psx-runtime      # ← JEDYNY cel, który budujemy na Androida (--target psx-runtime)
+      GEN_MARKER "${HERC_GAME_DIR}/generated/${HERC_BOOT_EXE}_dispatch.c"   # wymaganie marker C
+      GEN_FULL_GLOB  "${HERC_GAME_DIR}/generated/${HERC_BOOT_EXE}_full_*.c")
+  ```
+  Cel `psx-runtime` to **executable** (gry + launcher wbudowany). Wersja gry wybiera się flagą
+  `-DHERCULES_VERSION=SCES-00893`; plik `game.toml` dla SCES‑00893 leży w
+  `port/versions/SCES-00893/game.toml`.
+
+**Implikacje dla Androida:** androidowy CMake musi **dodać ten port jako podkatalog**, by odziedziczyć
+flagi toolchaina/ABI ustawione na hoście:
+```cmake
+# android/app/cpp/CMakeLists.txt (patrz 3.3)
+add_subdirectory("${HERCULES_PORT}" hercules_build EXCLUDE_FROM_ALL)
+# HERCULES_PORT = …/port; tam CMakeLists.txt sam ustawi PSXRECOMP_ROOT i include(hercules_game.cmake)
+```
+
+### 3.3 `android/app/cpp/CMakeLists.txt` (cel arm64‑v8a + biblioteki systemowe Androida)
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
-project(HerculesNative LANGUAGES C CXX)
+project(HerculesNative LANGUAGES C CXX)   # dziedziczy NDK toolchain + ABI z parent scope
 
-set(CMAKE_CXX_STANDARD 17)          # runtime psxrecomp pisany pod C++17 (MinGW/GCC default jest inny)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_BUILD_TYPE Release)       # NIE -O0: generated/*.c mają ~270 MB kodu
+# --- Herkules: port gry (PSXRECOMP_ROOT ustawia /port/CMakeLists.txt) ---
+add_subdirectory("${HERCULES_PORT}" hercules_build EXCLUDE_FROM_ALL)
 
-# --- Herkules: port gry (wskazujemy framework psxrecomp jako PSXRECOMP_ROOT) ---
-add_subdirectory(${HERCULES_PORT} hercules_build EXCLUDE_FROM_ALL)
-#   HERCULES_PORT = ścieżka do /port/ w repozytorium; tam CMakeLists.txt robi include(hercules_game.cmake)
-
-# --- Biblioteki systemowe Androida (Moduł 1.4) ---
+# --- Biblioteki systemowe Androida — patrz Moduł 1.8; framework ich NIE zna na desktopie ---
 target_link_libraries(psx-runtime PRIVATE
-    log          # -llog        : logi JNI/runtime
+    log          # -llog        : logi JNI/runtime (tag `Hercules` w adb logcat)
     android      # -laNDroid    : eventy okna / AInputQueue
     EGL          # -lEGL        : powierzchnia pod GLES (ścieżka alternatywna)
     glesv3       # -lglesv3     : renderer OpenGL ES 3.0
-    OpenSL_ES    # -lOpenSL_ES  : audio PSX (SPU); lub AAudio poniżej
+    OpenSL_ES    # -lOpenSL_ES  : audio PSX (SPU); lub AAudio dla niskiego opóźnienia
     z            # -lz          : decompress danych/overlay cache
-    Threads::Threads)
+    Threads::Threads)                  # runtime psxrecomp: c_std_11 / cxx_std_17
 
-# --- Vulkan: tylko jeśli włączony backend (dynamically loaded, brak link-time dep) ---
-if(PSX_ENABLE_VULKAN)
-    target_link_libraries(psx-runtime PRIVATE vulkan)   # libvulkan.so z device
+# --- Vulkan: tylko jeśli włączony backend. Domyślnie ON, SDK opcjonalne (łowanie dynamiczne). ---
+if(PSX_ENABLE_VULKAN AND TARGET vulkan)          # runtime.cmake L2343: option(...) default ON
+    target_link_libraries(psx-runtime PRIVATE vulkan)   # libvulkan.so z device NDK
 endif()
 ```
+
+**Dlaczego nie piszemy toolchaina od zera.** NDK dostarcza gotowy plik
+`<NDK>/build/cmake/android.toolchain.cmake`; androidowe `defaultConfig.externalNativeBuild.cmake.arguments`
+przekazuje `-DCMAKE_TOOLCHAIN_FILE=…/android.toolchain.cmake`. ABI (`-DANDROID_ABI`) i minimalne API
+(`-DANDROID_PLATFORM_LEVEL`) dziedziczą się przez `add_subdirectory`, bo są zwykłymi zmiennymi w scope parenta.
+
+**Optim.** Ustaw `-DCMAKE_BUILD_TYPE=Release` — `generated/*.c` mają setki MB kodu; `-O0` spowolniłoby build i
+grę. Framework sam wymusza język przez `target_compile_features(${target} PRIVATE c_std_11 cxx_std_17)` (bo
+`audio_trace.c` używa atomików C11, a `mod_packages.cpp` wymaga C++17) — nie trzeba jej downgrade'ować w parent.
 
 ### 3.4 `android/app/build.gradle` — ABI i NDK
 
@@ -436,22 +461,24 @@ android {
     ndkVersion = "27.0.12077973"
     defaultConfig {
         applicationId = "com.example.hercules.recompiled"
-        targetSdk = 34; minSdk = 24      // Vulkan + Scoped Storage
+        targetSdk = 34; minSdk = 24          // Vulkan ICD wymaga zwykle API 24+ (Scoped Storage)
         externalNativeBuild {
             cmake {
-                arguments << "-DANDROID_ABI=arm64-v8a"          // JEDYNE ABI w paczce
-                args << "-DHERCULES_PORT=${projectDir}/../../port"
-                // Wymuszenie SDL2 (działa stabilniej z aktywnością Androida niż domyślne SDL3):
-                if (System.getenv("PSX_SDL_BACKEND") == "SDL3") {
-                    args << "-DPSX_SDL_BACKEND=SDL2"
-                }
+                arguments << "-DCMAKE_TOOLCHAIN_FILE=${ndk}/build/cmake/android.toolchain.cmake"
+                args   << "-DANDROID_ABI=arm64-v8a"          // JEDYNE ABI w paczce
+                args   << "-DHERCULES_PORT=${projectDir}/../../port"
+                args   << "-DHERCULES_VERSION=SCES-00893"    // wersja gry (patrz 3.2)
             }
         }
-        ndk { abfilters = ["arm64-v8a"] }                     // wycina x86/x86_64/armeabi-v7a
+        ndk { abfilters = ["arm64-v8a"] }                   // wycina x86/x86_64/armeabi-v7a
     }
     buildFeatures { buildConfig = true }
 }
 ```
+
+> **SDL.** Desktopowy pinned SDL3 w FetchContent na NDK się nie skompiluje — używamy pełnego checkoutu
+> libsdl‑org/SDL (patrz Moduł 2). Jeśli aktywność Androida zachowuje się stabilniej z SDL2, przekazać
+> `-DPSX_SDL_BACKEND=SDL2` przez `arguments`.
 
 ### 3.5 Konfiguracja budowy (host) — analogia do `scripts/build_linux_release.sh`
 
@@ -462,13 +489,26 @@ cmake -S . -B build-android-arm64 -G Ninja \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM_LEVEL=34 \
   -DPSX_SDL_BACKEND=SDL2 \
+  -DPSX_ENABLE_VULKAN=ON \
   -DPSXRECOMP_REQUIRE_GAME_C=ON            # błąd jeśli brakuje generated/*.c (tak jak w CI)
 cmake --build build-android-arm64 --target psx-runtime
 ```
 
 - `-DANDROID_PLATFORM_LEVEL` decyduje o minimalnym `minSdk`; Vulkan ICD wymaga zwykle API 24+.
-- Syntetyczna uwaga: ramka pins SDL3 (desktopowy FetchContent) **nie skompiluje się** pod NDK — użyj pełnego
-  checkout libsdl‑org/SDL (`PSX_SDL3_FETCH=OFF -DSDL3_DIR=<checkout-android>/cmake`).
+- `-DPSXRECOMP_REQUIRE_GAME_C=ON` — gate: brak wygenerowanego C (dysk/SCES‑00893) przerywa konfigurację zamiast
+  budować setup host. To samo wymusza `GEN_MARKER` z `hercules_game.cmake`.
+- Vulkan: `-DPSX_ENABLE_VULKAN=ON` to domyślne; jeśli na hoście nie ma SDK/glslc, framework tylko loguje i
+  pozostawia stub — build się uda. Na device wystarczy `libvulkan.so` (ICD SoC), brak link‑time Vulkan SDK.
+
+### 3.6 Najczęstsze błędy toolchaina Androida
+
+| Symptom | Przyczyna / rozwiązanie |
+|---|---|
+| `PSXRecomp runtime is missing` | Niezainicjowany submodule: `git submodule update --init --recursive`; lub `-DPSXRECOMP_ROOT=<path>` |
+| brak celów po `add_subdirectory(port)` | `/port/CMakeLists.txt` robi `project()` — musi dziedziwić ABI z parent (ustawiane flagami `-DANDROID_ABI`, nie przez toolchain) |
+| błąd C++ pre‑17 na arm64 | framework wymusza cxx_std_17; sprawdź, czy NDK clang jest domyślnym kompilatorem (`CMAKE_CXX_COMPILER`) |
+| `generated/*.c` nie ma | najpierw wygeneruj host‑side (patrz Moduł 5), potem `-DPSXRECOMP_REQUIRE_GAME_C=ON` |
+| Vulkan „nie działa" po buildzie | backend jest łowany dynamicznie; upewnij się, że device ma ICD (`libvulkan.so`) i `minSdk ≥ 24` |
 
 ---
 
