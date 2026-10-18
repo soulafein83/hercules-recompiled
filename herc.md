@@ -43,40 +43,136 @@ platformową (rendering 1080p, 16:9, HD sprite'y, launcher).
 
 ## Moduł 1: Analiza Zależności i Architektury Projektu
 
-### 1.1 Punkt wejścia C/C++ oraz warstwa okna/renderera
+### 1.1 Co to jest projekt (streszczenie)
 
-| Co | Ścieżka w repozytorium | Uwagi do portu Androida |
+`hercules-recompiled` to **recompilacja** gry *Disney's Hercules* (PS1, 1997; wydania PAL SCES‑00891 … ‑00895,
+tutaj niemieckie **SCES‑00893**) — nie emulator. Oryginalny kod MIPS R3000A zostaje przekompilowany w czasie
+budowania na natywne C/C++ i uruchamia się **bez zmian** (byte‑identyczna logika), zastąpiono jedynie warstwę
+platformową: rendering 1080p, 16:9, HD sprite'y, launcher.
+
+| Element | Realizacja w tym repozytorium |
+|---|---|
+| Framework | `port/psxrecomp` — submodule **RetroPortingToolKit/psxrecomp** (fork psxrecomp mstana), statyczny recompiler MIPS→C + runtime SDL3/SDL2 + renderer OpenGL 3.3 core / Vulkan |
+| Typ budowy | AOT: emiter `psxrecomp-game` generuje pliki C (`generated/*.c`) → kompilacja na x64; **na Androida przeprofilowujemy pod arm64** |
+| Okno/renderer | `runtime/src/main.cpp` → `SDL_CreateWindow`, renderer OpenGL: `gpu_gl_renderer.c` (**desktop GL 3.3 core**, nie ES); Vulkan: `gpu_vk_renderer.c` (łowany dynamicznie) |
+| SDL | domyślnie **SDL3**, przełącznik `-DPSX_SDL_BACKEND=SDL2` |
+| Konfiguracja gry | `port/game.toml`, `game_options.toml`; ścieżki zapisu: `[runtime] memcard_dir = "saves"` |
+| Wskazywanie dysku | `disc_path.h::resolve_disc_path()`, cache `disc.cfg`/`disc-<id>.cfg`, loader ISO9660 w `cdrom.c` |
+| Save states | `savestate.c` (sloty + miniatury HD), ścieżki przez `savestate_slot_path()` |
+| Launcher | wbudowany w exe (`launcher_native/hl_launcher.cpp`); menu, opcje, aktualizacje |
+| Narzędzia hosta | AOT recompiler C++20; overlay toolchain (i386‑win32 TCC) do kompilacji overlay z dysku w locie |
+
+### 1.2 Punkt wejścia C/C++ oraz warstwa okna/renderera — dowody z kodu
+
+Analiza oparta na rzeczywistym drzewie `port/psxrecomp` (commit `2a4824fc`). Wejściem jest `main()` w
+`runtime/src/main.cpp`; okno tworzono bezpośrednio przez SDL.
+
+| Co | Ścieżka | Linia | Dowód z kodu |
+|---|---|---|---|
+| Preferencja renderera (globalna) | `main.cpp::g_video_renderer` | L1304 | `static int g_video_renderer = PSXRecompV4::DEFAULT_VIDEO_RENDERER;` (enum: 0=software, 1=opengl, 2=vulkan) |
+| Składnia flag okna | `main.cpp` ~L19235‑19248 | L19235-19248 | `win_flags = SDL_WINDOW_SHOWN \| SDL_WINDOW_RESIZABLE`; renderer 1 → `\| SDL_WINDOW_OPENGL` (+ optional high‑density), renderer 2 → `\| SDL_WINDOW_VULKAN` |
+| Tworzenie okna | `main.cpp::SDL_CreateWindow` | L19265 | `sdl_window = SDL_CreateWindow(window_title.c_str(), …, win_flags)`; fail → `SDL_CreateWindow failed: %s` (L19272) |
+| Kontekst GL (desktop core) | `main.cpp::configure_core_gl_context_attributes()` | L2246 | `SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_CORE_PROFILE)`; major/minor L2272‑2273, DOUBLEBUFFER/L_STENCIL_SIZE L2274‑2275 → **Core 3.3**, nie ES |
+| Inicjalizacja subsystemów | `main.cpp` ~L19175 / L17391 | — | `SDL_Init(SDL_INIT_VIDEO \| SDL_INIT_GAMECONTROLLER)`; audio osobno (subsystem audio) |
+
+**Renderer OpenGL (desktop).** `runtime/src/gpu_gl_renderer.c` (~668 KB): GL 3.x core + FBO + shadery z
+dynamicznym łoadeniem entrypointów (`load_modern_gl()` — wskaźniki `PFN_*`, np. `glCreateProgram`). Rasteryzacja
+rysuje VRAM PSX jako teksturalne kwady; prezentacja przez FBO + shader present/interpolation
+(`build_program(PRESENT_VS, PRESENT_FS)`). **To jest OpenGL desktopowy — nie ES.**
+
+**Renderer Vulkan.** `runtime/src/gpu_vk_renderer.c`: cały interfejs łowany dynamicznie przez
+`SDL_Vulkan_LoadLibrary(NULL)`; brak linkowania Vulkan SDK w czasie budowy. Symboliki łowane w locie. To
+najłatwiejsza ścieżka portowa na Androida (jeśli device ma Vulkan ICD), bo omija translację GL‑core→GLES.
+
+**Fuzja SDL2/SDL3.** Jedno miejsce mostkujące API: `runtime/include/psx_sdl.h` (`#if defined(PSX_SDL3)` z makrami
+aliasującymi; L237‑274). Tutaj trzeba dodać EGL/GLES + audio pod Androida.
+
+**Punkt wstrynięcia inputu (dotyk/BT).** `runtime/src/pad_external_input.h` → `PadExtHooks.capture_local()`
+(`main.cpp::capture_local_human_pad`, ~L6365) — jedyna oficjalna furtka do symulowania padu; blokowana przez
+`PadExtGate` (netplay/rewind/save).
+
+### 1.3 Wersja SDL — confirm z `runtime.cmake`
+
+Framework **domyślnie buduje z SDL3**; backend wybiera się flagą `-DPSX_SDL_BACKEND=SDL2`. Potwierdzenie w
+`port/psxrecomp/runtime/runtime.cmake`:
+
+```cmake
+# L124-130: wybór backendu (tylko SDL3 | SDL2)
+set(PSX_SDL_BACKEND "SDL3" CACHE STRING "SDL backend (SDL3 or SDL2)")
+set_property(CACHE PSX_SDL_BACKEND PROPERTY STRINGS SDL3 SDL2)
+string(TOUPPER "${PSX_SDL_BACKEND}" _psx_sdl_backend)
+
+# L245: wykrywanie systemowe — wymaga SDL 3.4 w CONFIG
+find_package(SDL3 3.4 CONFIG QUIET COMPONENTS SDL3 …)   # fail, jeśli brakuje <SDL3/SDL.h>
+# L301: fallback FetchContent (pinned SDL3), inaczej błąd konfiguracji (#308-309)
+
+# L342-345: ścieżka SDL2 (legacy backend A/B) — SDL2_LIBRARIES / STATIC_LDFLAGS
+```
+
+**Konsekwencia dla Androida:** musimy podać **pełny checkout libsdl‑org/SDL** (ma własny `android/` + Gradle +
+aktywność EGL). Desktopowy pinned SDL w FetchContent go nie ma — na NDK się nie skompiluje.
+
+### 1.4 Wybór backendu renderera — flow (main.cpp)
+
+```text
+g_video_renderer ∈ {0 software, 1 opengl, 2 vulkan}   // default = software/fallback
+        │  ustawiane z: DEFAULT_VIDEO_RENDERER / config.toml / CLI (--renderer) / launcher seed
+        ▼
+PSX_HAVE_VULKAN? (runtime.cmake włączony?) ──NIE──► renderer 2 → zgłoś "Vulkan not available", przełącz na OpenGL
+        │ TAK
+        ▼
+gr_set_backend( backend==2 ? GR_BACKEND_VULKAN :
+                backend==1 ? GR_BACKEND_OPENGL :
+                             GR_BACKEND_SOFTWARE )   // main.cpp ~L18647,przed gpu_init()
+```
+
+- **Software** (0) = domyślny fallback; `SDL_CreateRenderer` z backing texture. Na Androida dla tej gry **nie
+  realny** (zbyt wolny).
+- Netplay wymusza OpenGL retained‑textures (L18590: netplay profile requires GL); Vulkan w netplay nie jest
+  CPU‑auth → fallback software.
+
+### 1.5 Decyzja: renderer — OpenGL ES vs Vulkan (na Androida)
+
+- **Zalecana primary: Vulkan.** `gpu_vk_renderer.c` ładuje bibliotekę i symboliki w locie; na Androida wystarczy
+  ICD (`libvulkan.so`, wbudowany w większość SoC ARM) + SPIR‑V wygenerowany przez `glslc` z Vulkan SDK na hoście
+  (`tools/embed_spirv.py`). Omija problem translacji GL‑core→GLES. Wymaga `-DPSX_ENABLE_VULKAN=ON`.
+- **Alternatywa: OpenGL ES 3.0.** Tylko gdy Vulkan niedostępny. Wymaga: EGL za `psx_sdl.h` + kontekst
+  `SDL_GL_CreateContext(...)` z atrybutami GLES 3.0 (`SDL_GL_CONTEXT_PROFILE_ES`, major 3, minor 0), przetłumaczenia
+  desktop‑GL entrypointów w `gpu_gl_renderer.c` (FBO/VAO/shadery) on GLES oraz uwzględnienia różnic: brak
+  fixed‑functiona, `glReadPixels` wymagają flusha, inne domeny shaderów.
+- **Software** (`SDL_CreateRenderer`) — odradzane na Androida dla tej gry (zbyt wolny).
+
+### 1.6 Wymagane biblioteki zależne — host (budowa), z dowodów w `runtime.cmake`
+
+| Biblioteka / target | Gdzie linkowany | Źródło / uwagi |
 |---|---|---|
-| `int main()` (entry runtime) | `port/psxrecomp/runtime/src/main.cpp` | Używa `SDL_main`; okno: `SDL_CreateWindow` (~L19265), flagi `SDL_WINDOW_OPENGL`/`SDL_WINDOW_VULKAN`. Na Androida okna nie tworzymy — podpięta EGL‑powierzchnia z `SDLActivity`. |
-| Konfiguracja kontekstu GL | `main.cpp::configure_core_gl_context_attributes()` (~L2245) | **Core profile 3.3** → na Androida wymaga GLES; lepiej przełaczyć renderer Vulkan lub przetłumaczyć on GLES. |
-| Renderer OpenGL (desktop) | `runtime/src/gpu_gl_renderer.c` (~668 KB) | GL 3.x core + FBO + shadery z dynamicznym łoadeniem entrypointów (`load_modern_gl()`). Trzeba portować into GLES 2/3. |
-| Renderer Vulkan | `runtime/src/gpu_vk_renderer.c` | Cały interfejs **łowany dynamicznie** przez `SDL_Vulkan_LoadLibrary(NULL)`; brak linkowania Vulkan SDK w czasie budowy. Najłatwiejsza ścieżka portowa na Androida (jeśli urządzenie ma Vulkan ICD). |
-| Ślad SDL2/SDL3 seam | `runtime/include/psx_sdl.h` | **Jedno miejsce** mostkujące API — tutaj dodaj EGL/GLES + audio pod Androida. |
-| Input/Gamepad hook | `runtime/src/pad_external_input.h`, `main.cpp::capture_local_human_pad()` (~L6365) | **Punkt wstrzynięcia** dotyku/wirtualnego D‑pada/kontrolera Bluetooth (`PadExtHooks.capture_local`). |
+| **SDL3** (lub SDL2) | L1941 `${PSX_SDL_LIBRARIES}` / L1939 `static` | domyślnie 3.4 CONFIG; fallback FetchContent (#308). Android: pełny checkout libsdl‑org/SDL, nie desktopowy FetchContent |
+| **ZLIB::ZLIB** | L1948 | system lub zlibstatic via FetchContent; na Androida `libz` z NDK |
+| **chdr‑static**, **psx_texture_image_decode** | L1616 (zawsze) | decompress media + decode obrazów tekstur |
+| **Threads::Threads** | L2327 | C++17 pthreads |
+| `CMAKE_DL_LIBS` | L2297 | dynładowanie symboli Vulkan/GL |
+| optional: **recomp_net** | L2172 | netplay (wyłączony domyślnie) |
+| optional: **retcomm_rbengine** | L2174 | savestate‑snap |
+| optional: **openxr_loader** | L2281 | VR (GL 4.6); niepotrzebne na Androida |
 
-### 1.2 Decyzja: renderer — OpenGL ES vs Vulkan (zalecane)
+> Na Windowsie framework linkuje dodatkowo `ws2_32 iphlpapi dbghelp comdlg32 opengl32` (+ winpthread przy MinGW,
+> L2288‑2293) — te sygnatury **nie** występują na Androidu; zamiast OpenGL desktopowego idziemy Vulkan/GLES.
 
-- **Zalecnica ścieżka primary: Vulkan.** `gpu_vk_renderer.c` jest zaprojektowany tak, by łoadać
-  bibliotekę i symboliki Vulkan w locie; nie wymaga linkowania SDK. Na Androida wystarczy podać
-  odpowiedni ICD (`libvulkan.so`, wbudowany w większość SoC ARM) oraz wygenerować SPIR‑V przez `glslc`
-  z Vulkan SDK na hoście (`tools/embed_spirv.py`). To omija problem translacji GL‑core→GLES.
-- **Alternatywa: OpenGL ES 3.0.** Tylko jeśli Vulkan jest niedostępny (stary device). Wymaga: podpięcia EGL
-  za `psx_sdl.h` i utworzenia kontekstu przez `SDL_GL_CreateContext(...)` z atrybutami GLES 3.0,
-  przetłumaczenia desktop‑GL entrypointów w `gpu_gl_renderer.c` (FBO/VAO/shadery) on GLES oraz uwzględnienia
-  różnic: brak fixed‑functiona, `glReadPixels` wymagają flusha, inne domeny shaderów.
-- **Software fallback** (`SDL_CreateRenderer`) nie jest realny na Androida dla tej gry (zbyt wolny).
+### 1.7 Rozwiązywanie GL (Windows vs reszta) — dla kontekstu portu
 
-### 1.3 Wymagane biblioteki zależne — host (budowa)
+```cmake
+# runtime.cmake ~L2304-2321: non-Windows
+if(COMMAND recomp_resolve_gl)        # z recomp-ui/cmake/recomp_gl.cmake
+    recomp_resolve_gl(_psx_gl_target); target_link_libraries(... ${_psx_gl_target})
+else()
+    find_package(OpenGL)             # fallback systemowy OpenGL::GL / OpenGL::OpenGL
+endif()
+```
 
-| Narzędzie | Wersja / źródło | Po co |
-|---|---|---|
-| CMake ≥ 3.20, Ninja | system | system budowy |
-| GCC/G++ or clang‑17+ (Cygwin/MSYS niepotrzebne na Linuxie) | toolchain hosta | kompilacja runtime/recompressora |
-| Python 3 + numpy, Pillow | pip | generowanie `generated/*.c` (`psxrecomp_cli.py generate`) i overlay pipeline |
-| **Vulkan SDK (z `glslc`)** | Khronos Vulkan‑SDK | wygenerować SPIR‑V dla backendu Vulkan (embed przez `tools/embed_spirv.py`) |
-| SDL3 z pełnym Androidem | checkout **libsdl‑org/SDL** (+ `android/`, Gradle) — nie FetchContent desktopowy | pod Androida musi nosić aktywność EGL, a nie tylko silnik desktopowy |
+Na Androida **żaden** z tych ścieżek desktopowych (opengl32/OpenGL::GL) się nie przyda — podajemy EGL/GLESv3 lub
+Vulkan przez NDK; `PSX_ENABLE_VULKAN=ON` omija cały ten mechanizm.
 
-### 1.4 Wymagane biblioteki zależne — device (arm64‑v8a)
+### 1.8 Wymagane biblioteki zależne — device (arm64‑v8a)
 
 | Biblioteka | Pakiet systemowy Androida | Gdzie użyta |
 |---|---|---|
@@ -88,11 +184,11 @@ platformową (rendering 1080p, 16:9, HD sprite'y, launcher).
 | `libz` (`-lz`, zlib) | system | decompress danych dysku/overlay cache |
 | `libdl`, `libm`, `libpthread` | system | runtime C++17, Threads::Threads |
 
-### 1.5 Pipeline budowy (host → device) — schemat
+### 1.9 Pipeline budowy (host → device) — schemat
 
 ```
 [HOST] git clone --recursive hercules-recompiled        # submodule psxrecomp + patches
-       cd port && apply ../patches/psxrecomp/*.patch     # 11 patchy frameworku (nie upstream)
+       cd port && apply ../patches/psxrecomp/*.patch     # patchy frameworku (nie upstream)
        mkdir disc && cp "Disneys Hercules ...(.cue/.bin)"   # legalny dump, SCES-00893
 
 [HOST] ./psxrecomp/tools/ci/build_emitters.sh            # AOT: psxrecomp-game + psxrecomp-bios (C++20)
@@ -108,10 +204,9 @@ platformową (rendering 1080p, 16:9, HD sprite'y, launcher).
 [DEVICE] adb install hercules-debug.apk && adb logcat -s Hercules
 ```
 
-Ważne: `generated/*.c` są generowane **na hoście** z dysku i skompilowane do natywneho kodu — to jest
-"silnik gry". Na Androida zmieniamy tylko cel budowy (target arch) oraz warstwę platformową; logika gry
-zostaje identyczna.
-
+**Kluczowe:** `generated/*.c` są generowane **na hoście** z dysku i skompilowane do natywnego kodu — to jest
+"silnik gry". Na Androida zmieniamy tylko cel budowy (target arch) oraz warstwę platformową; logika gry zostaje
+identyczna.
 ---
 
 ## Moduł 2: Konfiguracja Warstwy Androida (JNI / SDL3 Activity)
