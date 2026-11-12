@@ -23,7 +23,8 @@ Java_com_example_hercules_JniBridge_setTouchPad(JNIEnv *env, jclass /*clazz*/, i
 }
 
 // Register native methods / keep the JVM happy at load time. System.loadLibrary("hercules") triggers this.
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void /*reserved*/) {
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    (void)reserved;
     JNIEnv *env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;

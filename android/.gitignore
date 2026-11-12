@@ -7,6 +7,10 @@
 /app/.externalNativeBuild/
 /build/
 
+# CMake / NDK externalNativeBuild state
+/app/.cxx/
+/.cxx/
+
 # Artifacts that may be shipped for testing
 *.apk
 *.aab

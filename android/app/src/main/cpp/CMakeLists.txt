@@ -8,7 +8,7 @@ project(hercules_android LANGUAGES C CXX)
 
 if(NOT DEFINED HERCULES_PORT)
     # Fallback for manual CLI builds (Gradle always passes -DHERCULES_PORT). Point it at the repo's port/ dir.
-    set(HERCULES_PORT "${CMAKE_CURRENT_SOURCE_DIR}/../../../port" CACHE PATH "Path to psx-recomp port/")
+    set(HERCULES_PORT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../port" CACHE PATH "Path to psx-recomp port/")
 endif()
 
 # --- Runtime configuration -----------------------------------------------------
@@ -40,15 +40,23 @@ add_library(hercules SHARED JniBridge.cpp)
 
 target_include_directories(hercules PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Threads::Threads requires an explicit find_package (the NDK toolchain does not
+# provide it implicitly). The framework's port/ CMake may also call it — find_package
+# is idempotent, so this is safe either way.
+find_package(Threads REQUIRED)
+
 # System libraries required by the NDK + psx-recomp on Android (see herc.md Moduł 3).
-# log: android logging; android: ANativeActivity/ANdroid_bitmap; EGL+glesv3: Vulkan fallback / graphics;
-# OpenSL_ES: PSX audio; z: decompression; Threads::Threads: runtime worker threads.
+# log: android logging; android: ANativeActivity/ANdroid_bitmap; EGL+GLESv3: Vulkan fallback / graphics;
+# OpenSLES: PSX audio; z: decompression; Threads::Threads: runtime worker threads.
+# NOTE: library names must match the NDK stub file names exactly (case-sensitive):
+#   libGLESv3.so  -> GLESv3   (NOT "glesv3")
+#   libOpenSLES.so -> OpenSLES (NOT "OpenSL_ES")
 target_link_libraries(hercules PRIVATE
     log
     android
     EGL
-    glesv3
-    OpenSL_ES
+    GLESv3
+    OpenSLES
     z
     Threads::Threads
 )

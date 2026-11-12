@@ -6,7 +6,8 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
-import android.view.OnTouchListener;
+import android.view.View;
+import android.view.View.OnTouchListener;
 
 /**
  * On-screen D-pad + face-buttons overlay drawn above the game surface.
