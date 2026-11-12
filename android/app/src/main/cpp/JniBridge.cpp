@@ -90,6 +90,11 @@ Java_com_example_hercules_JniBridge_setDataDir(JNIEnv *env, jclass /*clazz*/, js
     // --no-launcher (SDL_CreateProcessWithProperties). An APK cannot spawn its
     // own executable, so boot straight into the game instead of the launcher.
     setenv("PSX_NO_LAUNCHER", "1", 1);
+    // TEMP: on-screen FPS readout for on-device performance tuning.
+    setenv("PSX_FPS_TELEMETRY", "1", 1);
+    // Rewind snapshots the whole machine every 15 frames (~12.5 s history); it
+    // is a debug convenience and a large per-frame cost on a phone. Off by default.
+    setenv("PSX_REWIND", "0", 1);
     env->ReleaseStringUTFChars(path, p);
 }
 

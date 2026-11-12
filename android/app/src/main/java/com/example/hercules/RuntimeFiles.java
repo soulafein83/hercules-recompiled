@@ -143,7 +143,56 @@ final class RuntimeFiles {
         return last == null ? null : last.substring(last.lastIndexOf('/') + 1);
     }
 
-    private static String readFirstLine(File f) {
+    // ---------------------------------------------------------------------------
+// settings.toml: the runtime persists display options there and they SUPERSEDE
+// game.toml. Force fullscreen + a phone-friendly internal resolution while
+// preserving everything else (audio, controller, launcher sections).
+// ---------------------------------------------------------------------------
+static void ensureSettings(File runtimeDir, String internalResolution) {
+    File f = new File(runtimeDir, "settings.toml");
+    String text = "";
+    if (f.isFile()) {
+        try {
+            text = new String(java.nio.file.Files.readAllBytes(f.toPath()),
+                    StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            Log.w(TAG, "cannot read " + f, e);
+        }
+    }
+
+    if (text.trim().isEmpty()) {
+        text = "[video]\nfullscreen = 1\ninternal_resolution = \""
+                + internalResolution + "\"\n";
+    } else {
+        text = setVideoKey(text, "fullscreen", "1");
+        text = setVideoKey(text, "internal_resolution", "\"" + internalResolution + "\"");
+    }
+
+    try (OutputStream out = new FileOutputStream(f, false)) {
+        out.write(text.getBytes(StandardCharsets.UTF_8));
+    } catch (IOException e) {
+        Log.e(TAG, "cannot write " + f, e);
+    }
+}
+
+/** Replace {@code key = ...} in settings.toml, inserting it under [video] if absent. */
+private static String setVideoKey(String text, String key, String value) {
+    java.util.regex.Pattern line = java.util.regex.Pattern.compile(
+            "(?m)^[ \\t]*" + java.util.regex.Pattern.quote(key) + "[ \\t]*=.*$");
+    java.util.regex.Matcher m = line.matcher(text);
+    String assignment = key + " = " + value;
+    if (m.find()) {
+        return m.replaceFirst(java.util.regex.Matcher.quoteReplacement(assignment));
+    }
+    java.util.regex.Matcher header = java.util.regex.Pattern
+            .compile("(?m)^\\[video\\][ \\t]*$").matcher(text);
+    if (header.find()) {
+        return text.substring(0, header.end()) + "\n" + assignment + text.substring(header.end());
+    }
+    return text + "\n[video]\n" + assignment + "\n";
+}
+
+private static String readFirstLine(File f) {
         try (InputStream in = new java.io.FileInputStream(f)) {
             StringBuilder sb = new StringBuilder();
             int c;

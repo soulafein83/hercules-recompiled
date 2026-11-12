@@ -1,5 +1,11 @@
 plugins { id 'com.android.application' version '8.7.2' }
 
+// Internal render resolution for the Android port. game.toml ships "1080p"
+// (5x supersampling), far too heavy for a phone GPU. Override at build time:
+//   ./gradlew :app:assembleDebug -Phercules.internalResolution=720p
+def herculesInternalResolution =
+        (project.findProperty("hercules.internalResolution") ?: "native").toString()
+
 android {
     namespace = "com.example.hercules"          // musi zgadzać się z Java package + manifest
     compileSdk  = 34
@@ -11,6 +17,10 @@ android {
         targetSdk       = 34
         versionCode     = 1
         versionName     = "0.1.0"
+
+        // Runtime display settings are persisted in settings.toml and supersede
+        // game.toml; RuntimeFiles.ensureSettings() writes this value there.
+        buildConfigField "String", "INTERNAL_RESOLUTION", "\"${herculesInternalResolution}\""
 
         externalNativeBuild {
             cmake {
@@ -38,6 +48,9 @@ android {
         }
         release {
             minifyEnabled false
+            // Ship an optimized (CMake Release, -O2/-O3) build that is still
+            // installable from the command line: sign with the debug keystore.
+            signingConfig signingConfigs.debug
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -49,6 +62,10 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 }
 
@@ -67,7 +84,12 @@ def runtimeAssetsRoot = file("${buildDir}/generated/runtimeAssets")
 
 tasks.register("stageRuntimeAssets", Copy) {
     into new File(runtimeAssetsRoot, "runtime")
-    from("${herculesPortDir}/versions/SCES-00891/game.toml")
+    from("${herculesPortDir}/versions/SCES-00891/game.toml") {
+        filter { line ->
+            line.replaceAll(/internal_resolution\s*=\s*"[^"]*"/,
+                    'internal_resolution = "' + herculesInternalResolution + '"')
+        }
+    }
     from("${herculesPortDir}/versions/SCES-00891/aot") { into "aot" }
     from("${herculesPortDir}/psxrecomp/bios/openbios.bin") { into "bios" }
 }

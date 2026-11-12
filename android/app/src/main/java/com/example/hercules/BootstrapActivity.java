@@ -44,6 +44,7 @@ public class BootstrapActivity extends Activity {
         } catch (IOException e) {
             Log.e(TAG, "cannot extract runtime assets", e);
         }
+        RuntimeFiles.ensureSettings(mRuntimeDir, BuildConfig.INTERNAL_RESOLUTION);
 
         // chdir() is process-global: do it before HerculesActivity starts SDL.
         JniBridge.setDataDir(mRuntimeDir.getAbsolutePath());

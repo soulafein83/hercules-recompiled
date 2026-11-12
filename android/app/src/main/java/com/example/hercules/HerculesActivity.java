@@ -1,6 +1,11 @@
 package com.example.hercules;
 
+import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 
 // SDLActivity is COPIED from the pinned checkout of libsdl-org/SDL (see android/README.md).
 // It is NOT part of the psxrecomp framework — that framework ships no Android layer at all.
@@ -61,9 +66,54 @@ public class HerculesActivity extends SDLActivity {
         } catch (java.io.IOException e) {
             android.util.Log.e("Hercules", "cannot extract runtime assets", e);
         }
+        RuntimeFiles.ensureSettings(runtimeDir, BuildConfig.INTERNAL_RESOLUTION);
         JniBridge.setDataDir(runtimeDir.getAbsolutePath());
         super.onCreate(savedInstanceState);
+        enterImmersiveMode();
         // TODO: inject HerculesGameView overlay using approach (a) or (b) above.
+    }
+
+    /**
+     * Hide the status/navigation bars. The theme's windowFullscreen alone is not
+     * enough on API 30+ (and Android 15+ enforces edge-to-edge), which left the
+     * status bar and the nav bar visible around the picture.
+     */
+    private void enterImmersiveMode() {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        if (Build.VERSION.SDK_INT >= 30 /* Android 11 (R) */) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            android.util.Log.i("Hercules", "immersive: sdk=" + Build.VERSION.SDK_INT
+                    + " controller=" + (c != null));
+            if (c != null) {
+                c.hide(WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
+        if (Build.VERSION.SDK_INT >= 28) {
+            getWindow().getAttributes().layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) enterImmersiveMode();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        enterImmersiveMode();
     }
 
     /**
