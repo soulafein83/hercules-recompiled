@@ -1,0 +1,158 @@
+diff --git a/runtime/src/psx_fiber.c b/runtime/src/psx_fiber.c
+index a379eca0..ab1fa6ab 100644
+--- a/runtime/src/psx_fiber.c
++++ b/runtime/src/psx_fiber.c
+@@ -34,6 +34,153 @@ psx_fiber_t psx_fiber_create(size_t stack_size, psx_fiber_entry entry, void* arg
+ void psx_fiber_switch(psx_fiber_t target) { SwitchToFiber((LPVOID)target); }
+ void psx_fiber_destroy(psx_fiber_t fiber) { if (fiber) DeleteFiber((LPVOID)fiber); }
+ 
++#elif defined(__ANDROID__)
++
++/*
++ * Android/bionic has no ucontext context functions (getcontext/makecontext/
++ * swapcontext were never implemented for any ABI). Mirror the cooperative
++ * contract with one OS thread per fiber and a strict turn-taking handoff:
++ * exactly one fiber runs at a time and every switch is explicit, so a plain
++ * static `s_current` is safe.
++ *
++ * The BIOS scheduler owns at most 32 host fibers (traps.c s_host_threads[32]),
++ * so the thread-per-fiber cost is bounded (~32 * 1 MB stacks by default).
++ */
++
++#include <pthread.h>
++#include <stdint.h>
++#include <stdlib.h>
++
++typedef struct psx_fiber_impl {
++    pthread_t       thread;
++    pthread_mutex_t lock;
++    pthread_cond_t  cond;
++    int             turn;        /* 1 = this fiber has been given the CPU */
++    int             kill;        /* psx_fiber_destroy() asked us to stop */
++    int             has_thread;  /* 0 for the converted (real) thread */
++    psx_fiber_entry entry;
++    void*           arg;
++    struct psx_fiber_impl* return_to; /* switch back here if entry returns */
++} psx_fiber_impl;
++
++static psx_fiber_impl* s_current = NULL;
++
++static psx_fiber_impl* fiber_new(void)
++{
++    psx_fiber_impl* f = (psx_fiber_impl*)calloc(1, sizeof(*f));
++    if (!f) return NULL;
++    pthread_mutex_init(&f->lock, NULL);
++    pthread_cond_init(&f->cond, NULL);
++    return f;
++}
++
++/* Block until this fiber is given the CPU (turn == 1), then consume it. */
++static void fiber_wait_turn(psx_fiber_impl* f)
++{
++    pthread_mutex_lock(&f->lock);
++    while (!f->turn && !f->kill) pthread_cond_wait(&f->cond, &f->lock);
++    if (f->kill) {
++        pthread_mutex_unlock(&f->lock);
++        pthread_exit(NULL);
++    }
++    f->turn = 0;
++    pthread_mutex_unlock(&f->lock);
++}
++
++static void* fiber_thread_main(void* p)
++{
++    psx_fiber_impl* f = (psx_fiber_impl*)p;
++    fiber_wait_turn(f);
++    f->entry(f->arg);
++    /* The BIOS thread entry never returns normally (it switches to its
++     * scheduler target or traps). Hand back defensively if it does. */
++    if (f->return_to) psx_fiber_switch((psx_fiber_t)f->return_to);
++    else pthread_exit(NULL);
++    return NULL;
++}
++
++psx_fiber_t psx_fiber_convert_thread(void)
++{
++    if (!s_current) {
++        psx_fiber_impl* f = fiber_new();
++        if (!f) return NULL;
++        f->has_thread = 0;   /* runs on the real thread; turn==0 = running */
++        s_current = f;
++    }
++    return (psx_fiber_t)s_current;
++}
++
++psx_fiber_t psx_fiber_current(void) { return (psx_fiber_t)s_current; }
++
++psx_fiber_t psx_fiber_create(size_t stack_size, psx_fiber_entry entry, void* arg)
++{
++    psx_fiber_impl* f = fiber_new();
++    if (!f) return NULL;
++    f->entry = entry;
++    f->arg = arg;
++    f->return_to = s_current;
++    f->has_thread = 1;
++
++    /* Floor the stack at something a recompiled thread can actually use. */
++    if (stack_size < (size_t)(256 * 1024)) stack_size = 256 * 1024;
++
++    pthread_attr_t attr;
++    pthread_attr_init(&attr);
++    pthread_attr_setstacksize(&attr, stack_size);
++    if (pthread_create(&f->thread, &attr, fiber_thread_main, f) != 0) {
++        pthread_attr_destroy(&attr);
++        pthread_mutex_destroy(&f->lock);
++        pthread_cond_destroy(&f->cond);
++        free(f);
++        return NULL;
++    }
++    pthread_attr_destroy(&attr);
++    return (psx_fiber_t)f;
++}
++
++void psx_fiber_switch(psx_fiber_t target)
++{
++    psx_fiber_impl* to   = (psx_fiber_impl*)target;
++    psx_fiber_impl* from = s_current;
++    if (!to || to == from) return;
++
++    s_current = to;
++
++    /* Give the CPU to `to`. */
++    pthread_mutex_lock(&to->lock);
++    to->turn = 1;
++    pthread_cond_signal(&to->cond);
++    pthread_mutex_unlock(&to->lock);
++
++    /* Suspend until some fiber switches back to `from`. */
++    pthread_mutex_lock(&from->lock);
++    while (!from->turn && !from->kill) pthread_cond_wait(&from->cond, &from->lock);
++    if (from->kill) {
++        pthread_mutex_unlock(&from->lock);
++        pthread_exit(NULL);
++    }
++    from->turn = 0;
++    pthread_mutex_unlock(&from->lock);
++    /* s_current is already `from` (set by the switcher before waking us). */
++}
++
++void psx_fiber_destroy(psx_fiber_t fiber)
++{
++    psx_fiber_impl* f = (psx_fiber_impl*)fiber;
++    if (!f) return;
++    if (f->has_thread) {
++        pthread_mutex_lock(&f->lock);
++        f->kill = 1;
++        f->turn = 1;
++        pthread_cond_signal(&f->cond);
++        pthread_mutex_unlock(&f->lock);
++        pthread_join(f->thread, NULL);
++    }
++    pthread_mutex_destroy(&f->lock);
++    pthread_cond_destroy(&f->cond);
++    free(f);
++}
++
+ #else /* POSIX: ucontext */
+ 
+ #ifndef _XOPEN_SOURCE

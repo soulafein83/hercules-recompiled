@@ -111,3 +111,6 @@ starvation_dump.jsonl
 /versions/*/.cache/
 /versions/*/*.log
 /versions/*/build-recompiler
+
+# Portable recompiler toolchain downloaded per version (machine-local)
+/versions/*/toolchain/

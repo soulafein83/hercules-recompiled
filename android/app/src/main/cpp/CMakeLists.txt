@@ -13,7 +13,9 @@ endif()
 
 # --- Runtime configuration -----------------------------------------------------
 if(NOT DEFINED HERCULES_VERSION)
-    set(HERCULES_VERSION SCES-00893 CACHE STRING "Game version (see port/versions/<VER>/game.toml)")
+    # English PAL release (matches the Redump dump we build against). Build other
+    # releases with -DHERCULES_VERSION=SCES-0089x (see port/versions/<VER>/).
+    set(HERCULES_VERSION SCES-00891 CACHE STRING "Game version (see port/versions/<VER>/game.toml)")
 endif()
 
 # Vulkan is the primary renderer; GLES ES 3.0 is an optional fallback toggled by app/build.gradle's USE_GLES property.
@@ -22,9 +24,28 @@ if(NOT DEFINED PSX_ENABLE_VULKAN)
 endif()
 
 # --- Pull in the psx-recomp runtime + generated C ------------------------------
-# add_subdirectory pulls port/ into our build and defines the `psx-runtime` target(s). EXCLUDE_FROM_ALL keeps
-# this subproject out of default builds (Gradle only needs libhercules.so; the game exe is never launched here).
-add_subdirectory(${HERCULES_PORT} hercules_build EXCLUDE_FROM_ALL)
+# The port root builds the German release (SCES-00893). Every other PAL release
+# builds from its own versions/<ID>/CMakeLists.txt (see port/README.md); that
+# makes generated/ and hercules_addrs.h match the player's disc. Pick the dir
+# that corresponds to HERCULES_VERSION.
+set(HERCULES_PROJECT_DIR "${HERCULES_PORT}")
+if(EXISTS "${HERCULES_PORT}/versions/${HERCULES_VERSION}/CMakeLists.txt")
+    set(HERCULES_PROJECT_DIR "${HERCULES_PORT}/versions/${HERCULES_VERSION}")
+endif()
+message(STATUS "Hercules: HERCULES_VERSION=${HERCULES_VERSION}, project=${HERCULES_PROJECT_DIR}")
+add_subdirectory(${HERCULES_PROJECT_DIR} hercules_build EXCLUDE_FROM_ALL)
+
+# --- Android API < 29 compat shim ---------------------------------------------
+# bionic hides timespec_get() below API 29; the framework's runtime/src/dma.c
+# uses it for diagnostics. Force-include a portable definition into the runtime
+# targets so minSdk 24 keeps working without patching the psxrecomp submodule.
+# See compat/hercules_android_compat.h.
+set(HERCULES_ANDROID_COMPAT "${CMAKE_CURRENT_SOURCE_DIR}/compat/hercules_android_compat.h")
+foreach(_hercules_shim_target psx-runtime psx-runtime-pgxp)
+    if(TARGET ${_hercules_shim_target})
+        target_compile_options(${_hercules_shim_target} PRIVATE -include "${HERCULES_ANDROID_COMPAT}")
+    endif()
+endforeach()
 
 # --- Integration seam: psx-runtime is an EXECUTABLE, but JNI loads a .so --------
 # The framework's `psxrecomp_add_game_runtime(psx-runtime ...)` emits a self-contained exe with its own SDL main.

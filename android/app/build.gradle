@@ -16,7 +16,7 @@ android {
             cmake {
                 arguments << "-DANDROID_ABI=arm64-v8a"          // JEDYNE ABI w paczce (patrz Moduł 3)
                 arguments << "-DHERCULES_PORT=${projectDir}/../../port"
-                arguments << "-DHERCULES_VERSION=SCES-00893"    // wersja gry (patrz Moduł 3.2)
+                arguments << "-DHERCULES_VERSION=SCES-00891"    // wersja gry — angielska PAL (patrz Moduł 3.2)
 
                 // Vulkan jest primary; GLES ES to fallback przełączany flagą PSX_SDL_BACKEND=SDL2.
                 if (project.hasProperty("USE_GLES")) {
