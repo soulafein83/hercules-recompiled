@@ -36,5 +36,16 @@ public final class JniBridge {
     /** Update the virtual D-pad / face buttons + analog stick from touch input. */
     public static native void setTouchPad(int buttons, float leftStickX, float rightStickY);
 
+    /**
+     * Point the psx-recomp runtime at the app's private data directory.
+     *
+     * The runtime resolves game.toml, bios/, disc.cfg and save files relative to
+     * the "exe directory", which it derives from argv[0]. SDL passes
+     * argv[0]="app_process" on Android, so that resolves to the process CWD;
+     * this chdir()s there before SDL_main starts. Call it on the main thread
+     * before the SDL activity begins.
+     */
+    public static native void setDataDir(String path);
+
     private JniBridge() {}
 }

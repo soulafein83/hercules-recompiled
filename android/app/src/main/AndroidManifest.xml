@@ -15,17 +15,25 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true">
 
+        <!-- Launcher: stages runtime data + asks for the disc, then starts the game. -->
         <activity
-            android:name=".HerculesActivity"
+            android:name=".BootstrapActivity"
             android:exported="true"
             android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:theme="@style/Theme.Hercules.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- SDL host activity; started by BootstrapActivity once the disc is ready. -->
+        <activity
+            android:name=".HerculesActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:theme="@style/Theme.Hercules.Fullscreen" />
     </application>
 
 </manifest>

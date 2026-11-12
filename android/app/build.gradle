@@ -56,3 +56,25 @@ dependencies {
     // Uwaga: SDLActivity.java kopiujemy z PINNED checkoutu libsdl-org/SDL (patrz android/README.md),
     // a nie jako zależność Maven — framework psxrecomp NIE dostarcza android/. Brak zależności poniżej.
 }
+
+// --- Runtime data staged into the APK -----------------------------------------
+// The psx-recomp runtime reads game.toml, bios/openbios.bin and aot/ from its
+// working directory (see BootstrapActivity / RuntimeFiles). Stage the small
+// (≈600 KB) payload from port/ into assets/runtime/ so the APK is self-contained;
+// game.toml for SCES-00891 is the English PAL release this port builds.
+def herculesPortDir = file("${projectDir}/../../port")
+def runtimeAssetsRoot = file("${buildDir}/generated/runtimeAssets")
+
+tasks.register("stageRuntimeAssets", Copy) {
+    into new File(runtimeAssetsRoot, "runtime")
+    from("${herculesPortDir}/versions/SCES-00891/game.toml")
+    from("${herculesPortDir}/versions/SCES-00891/aot") { into "aot" }
+    from("${herculesPortDir}/psxrecomp/bios/openbios.bin") { into "bios" }
+}
+
+android.sourceSets.main.assets.srcDirs += [runtimeAssetsRoot]
+
+// Ensure the payload is staged before assets are merged (task ordering is not
+// guaranteed for dynamically registered tasks, so hook the merge tasks too).
+tasks.matching { it.name == "preBuild" || (it.name.startsWith("merge") && it.name.endsWith("Assets")) }
+        .configureEach { dependsOn("stageRuntimeAssets") }
