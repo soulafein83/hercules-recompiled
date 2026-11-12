@@ -1,22 +1,25 @@
 # Android port — Hercules Recompiled (arm64-v8a)
 
-Gradle/Android project for the Hercules port. This is **not** a drop-in build of the game yet — the
-`psxrecomp` framework ships **no Android layer** (no `android/`, no Gradle, no `SDLActivity`), so everything
-below was created from scratch to match the plan in [`../herc.md`](../herc.md).
+Gradle/Android project for the Hercules port. The `psxrecomp` framework ships **no Android layer**, so the
+Gradle project, the SDL3 app sources, the JNI bridge and the platform shims were created here to match the
+plan in [`../herc.md`](../herc.md).
 
 ## Current status
 
 | Layer | State |
 |---|---|
-| Gradle project (AGP 8.7.2, Gradle 8.10 wrapper) | ✅ scaffolded + wrapper generated |
-| `org/libsdl/app/` (SDL3 app sources) | ✅ **SDL 3.4.18** sources copied in (real `SDLActivity`, not a placeholder) |
-| Java layer (`com/example/hercules/` + SDL) | ✅ **compiles** against `compileSdk 34` |
-| JNI bridge (`cpp/JniBridge.*`) | ✅ **builds standalone** to `libhercules.so` (arm64-v8a, minSdk 24); exports `hercules_touch_state()` + `Java_com_example_hercules_JniBridge_setTouchPad` |
-| `cpp/CMakeLists.txt` | ✅ corrected: `find_package(Threads)`, NDK stub names (`GLESv3`, `OpenSLES`) |
-| `port/` framework + game ROM | ⛔ **not present** — see *Remaining work* |
+| Gradle project (AGP 8.7.2, Gradle 8.10 wrapper) | ✅ builds |
+| `org/libsdl/app/` (SDL3 app sources) | ✅ SDL 3.4.18 (`SDLActivity`, not a placeholder) |
+| `psxrecomp` submodule + framework patches | ✅ `2a4824f` + patches 0001–0013 (`port/patches/psxrecomp/`) |
+| Game C (codegen, SCES-00891) | ✅ 536 functions / 284 765 lines + 40 186 static overlay variants |
+| Native runtime | ✅ built as **`libmain.so`** (patch 0013) — an APK cannot launch a desktop exe |
+| JNI bridge | ✅ `libhercules.so` (`setTouchPad`, `setDataDir`, `hercules_touch_state`) |
+| **APK** | ✅ **`app-debug.apk` (49 MB, arm64-v8a)** — `libmain.so` + `libhercules.so` + `assets/runtime/` |
+| Runtime data | ✅ `BootstrapActivity` extracts `game.toml`/OpenBIOS/AOT, SAF disc picker, `chdir` before `SDL_main` |
+| On-device run | ⚠️ **not yet smoke-tested** (no device/AVD in the build environment) |
 
-The full APK build is blocked by two external dependencies (see below). Everything in-tree is buildable and
-correct; only the framework + game data are missing.
+Known follow-ups: the on-screen pad overlay is not injected yet, the preloaded mods are not bundled, and the
+GLES fallback path may need shader-level fixes on real hardware (Vulkan is the primary renderer).
 
 ---
 
@@ -85,20 +88,30 @@ psx-recomp's `main.cpp::capture_local_human_pad()` reads it through
 
 ---
 
-## Remaining work (external dependencies)
+## Building from a clean checkout
 
-The in-tree code is complete and buildable. Two things outside this repo are required for a full APK:
-
-1. **`psxrecomp` framework** — initialize the submodule:
+1. Initialize the framework and apply its patches (`port/patches/psxrecomp/`):
    ```bash
-   git submodule update --init --deep   # port/psxrecomp ← RetroPortingToolKit/psxrecomp
+   git submodule update --init --recursive
+   (cd port/psxrecomp && git apply ../patches/psxrecomp/*.patch)
    ```
-2. **Game data** — the recompilation is generated from the PS1 disc (`SCES-00893`). Without the disc image the
-   game C is never generated, so `add_subdirectory(/port)` has nothing to build. Provide the disc and generate
-   the runtime per `port/README.md` / `herc.md`.
+2. Build the recompiler emitters and generate the game C from your own SCES-00891 dump:
+   ```bash
+   (cd port && ./psxrecomp/tools/ci/build_emitters.sh)
+   (cd port && python3 psxrecomp/psxrecomp_cli.py generate \
+        --config versions/SCES-00891/game.toml \
+        --project-root versions/SCES-00891 \
+        --disc "$PWD/versions/SCES-00891/disc/<your>.cue")
+   ```
+   `disc/` is gitignored; the generated code lands in `versions/SCES-00891/generated/` (~137 MB).
+3. Build the APK:
+   ```bash
+   cd android && ./gradlew :app:assembleDebug
+   ```
 
-Once both are present, the Gradle native build (`add_subdirectory(/port)`) will produce the runtime, and the
-exe→shared-lib seam above exposes it to JNI.
+The APK is self-contained except for the disc: on first launch `BootstrapActivity` stages the runtime data and
+opens the Storage Access Framework picker for a `.cue`+`.bin`, `.bin`, `.img`, `.iso` or `.chd` image of
+SCES-00891, copies it into app-private storage and records it in `disc.cfg`.
 
 ---
 
