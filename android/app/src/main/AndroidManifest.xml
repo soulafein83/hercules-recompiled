@@ -7,6 +7,11 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- The psx-recomp runtime opens a loopback TCP debug server (127.0.0.1:4370)
+         used for on-device diagnostics; Android requires INTERNET even for
+         loopback sockets. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
         android:hasFragileUserData="true"
