@@ -73,7 +73,7 @@ public class HerculesActivity extends SDLActivity {
      */
     @Override
     protected String[] getArguments() {
-        return new String[] { "--renderer", "software" };
+        return new String[] { "--renderer", "vulkan" };
     }
 
     // Optional app-specific lifecycle hooks can be added here (e.g. re-arming the pad overlay on resume).
