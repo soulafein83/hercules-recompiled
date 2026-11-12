@@ -52,8 +52,28 @@ public class HerculesActivity extends SDLActivity {
      */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // Runs on every launch, including a restored/recents one where
+        // BootstrapActivity is not in the path: stage the runtime data and set
+        // the CWD (plus PSX_NO_LAUNCHER) before SDL starts its native thread.
+        java.io.File runtimeDir = RuntimeFiles.runtimeDir(this);
+        try {
+            RuntimeFiles.extractAssets(this, "runtime", runtimeDir);
+        } catch (java.io.IOException e) {
+            android.util.Log.e("Hercules", "cannot extract runtime assets", e);
+        }
+        JniBridge.setDataDir(runtimeDir.getAbsolutePath());
         super.onCreate(savedInstanceState);
         // TODO: inject HerculesGameView overlay using approach (a) or (b) above.
+    }
+
+    /**
+     * SDL passes these as argv[1..]; the runtime's desktop default in game.toml
+     * is OpenGL, whose GLSL 330 shaders cannot run on GLES. Vulkan is the port's
+     * primary renderer (see herc.md §1.5) and is dynamically loaded.
+     */
+    @Override
+    protected String[] getArguments() {
+        return new String[] { "--renderer", "software" };
     }
 
     // Optional app-specific lifecycle hooks can be added here (e.g. re-arming the pad overlay on resume).

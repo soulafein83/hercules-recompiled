@@ -7,13 +7,62 @@
 
 #include <android/log.h>
 #include <jni.h>
+#include <pthread.h>
 #include <unistd.h>
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 static TouchPadState g_state;
 
 extern "C" TouchPadState* hercules_touch_state() { return &g_state; }
 
-JNIEXPORT void JNICALL
+// ---------------------------------------------------------------------------
+// stdout/stderr -> logcat
+//
+// The psx-recomp runtime reports disc/BIOS/init problems on stdout/stderr.
+// Android discards both for an app process, so those failures are invisible in
+// logcat. Pipe them through a reader thread that forwards everything under the
+// "HerculesRT" tag.
+// ---------------------------------------------------------------------------
+namespace {
+
+void* stdio_log_thread(void* arg) {
+    int fd = static_cast<int>(reinterpret_cast<intptr_t>(arg));
+    char buf[1024];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        __android_log_write(ANDROID_LOG_INFO, "HerculesRT", buf);
+    }
+    return nullptr;
+}
+
+void redirect_stdio_to_logcat() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+
+    int fds[2];
+    if (pipe(fds) != 0) return;
+    dup2(fds[1], STDOUT_FILENO);
+    dup2(fds[1], STDERR_FILENO);
+    close(fds[1]);
+
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+
+    pthread_t t;
+    if (pthread_create(&t, nullptr, stdio_log_thread,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(fds[0]))) == 0) {
+        pthread_detach(t);
+    }
+}
+
+}  // namespace
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_example_hercules_JniBridge_setTouchPad(JNIEnv *env, jclass /*clazz*/, int32_t buttons,
                                                 jfloat lx, jfloat ry) {
     (void)env;
@@ -29,7 +78,7 @@ Java_com_example_hercules_JniBridge_setTouchPad(JNIEnv *env, jclass /*clazz*/, i
 // to the "exe directory", which it derives from argv[0]; SDL passes
 // argv[0]="app_process" on Android, so that resolves to the process CWD.
 // chdir() before SDL_main makes every relative path land in this directory.
-JNIEXPORT void JNICALL
+extern "C" JNIEXPORT void JNICALL
 Java_com_example_hercules_JniBridge_setDataDir(JNIEnv *env, jclass /*clazz*/, jstring path) {
     if (!path) return;
     const char *p = env->GetStringUTFChars(path, nullptr);
@@ -37,15 +86,22 @@ Java_com_example_hercules_JniBridge_setDataDir(JNIEnv *env, jclass /*clazz*/, js
     if (chdir(p) != 0) {
         __android_log_print(ANDROID_LOG_ERROR, "Hercules", "setDataDir: chdir(%s) failed", p);
     }
+    // The framework's launcher "START GAME" spawns the game executable with
+    // --no-launcher (SDL_CreateProcessWithProperties). An APK cannot spawn its
+    // own executable, so boot straight into the game instead of the launcher.
+    setenv("PSX_NO_LAUNCHER", "1", 1);
     env->ReleaseStringUTFChars(path, p);
 }
 
 // Register native methods / keep the JVM happy at load time. System.loadLibrary("hercules") triggers this.
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void)reserved;
+    redirect_stdio_to_logcat();
     JNIEnv *env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;
     }
-    return JNI_OK;
+    // JNI_OnLoad must return the JNI *version*, not JNI_OK (0): returning 0 makes
+    // the runtime reject the library with "Bad JNI version returned from JNI_OnLoad".
+    return JNI_VERSION_1_6;
 }
