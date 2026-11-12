@@ -22,6 +22,21 @@ public class HerculesActivity extends SDLActivity {
     }
 
     /**
+     * SDL3 is linked statically into libmain.so: that shared object is the
+     * psx-recomp runtime, built as a library (see patch 0013 in
+     * port/patches/psxrecomp/) because an APK cannot launch the desktop
+     * executable. SDLActivity then calls SDL_main from it.
+     *
+     * SDL's default list also names "SDL3" for builds that ship SDL as its own
+     * shared library; this port does not, so loading "main" alone is correct.
+     * getMainSharedObject() uses the last entry, i.e. libmain.so.
+     */
+    @Override
+    protected String[] getLibraries() {
+        return new String[] { "main" };
+    }
+
+    /**
      * INTEGRATION SEAM — do not guess this against the pinned SDL3 source.
      *
      * The on-screen D-pad (HerculesGameView) must be layered ON TOP of SDL's surface WITHOUT swallowing the

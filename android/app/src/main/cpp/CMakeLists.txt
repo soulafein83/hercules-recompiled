@@ -41,9 +41,24 @@ add_subdirectory(${HERCULES_PROJECT_DIR} hercules_build EXCLUDE_FROM_ALL)
 # targets so minSdk 24 keeps working without patching the psxrecomp submodule.
 # See compat/hercules_android_compat.h.
 set(HERCULES_ANDROID_COMPAT "${CMAKE_CURRENT_SOURCE_DIR}/compat/hercules_android_compat.h")
+set(HERCULES_GLES_COMPAT "${CMAKE_CURRENT_SOURCE_DIR}/compat/hercules_gles_compat.c")
 foreach(_hercules_shim_target psx-runtime psx-runtime-pgxp)
     if(TARGET ${_hercules_shim_target})
         target_compile_options(${_hercules_shim_target} PRIVATE -include "${HERCULES_ANDROID_COMPAT}")
+
+        # Desktop-GL entry points that gpu_gl_renderer.c calls directly but GLES
+        # does not provide (glClearDepth, glGetTexImage). glReadBuffer comes from
+        # libGLESv3.so, linked below.
+        target_sources(${_hercules_shim_target} PRIVATE "${HERCULES_GLES_COMPAT}")
+
+        # Android system libraries (the framework only knows the desktop ones).
+        target_link_libraries(${_hercules_shim_target} PRIVATE
+            log android EGL GLESv3 OpenSLES z m dl atomic)
+
+        # SDLActivity loads libmain.so and calls SDL_main; keep that exported.
+        set_target_properties(${_hercules_shim_target} PROPERTIES
+            C_VISIBILITY_PRESET default
+            CXX_VISIBILITY_PRESET default)
     endif()
 endforeach()
 

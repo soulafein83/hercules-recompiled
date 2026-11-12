@@ -1,0 +1,44 @@
+--- a/runtime/runtime.cmake
++++ b/runtime/runtime.cmake
+@@ -1608,12 +1608,24 @@
+         set(mode_source ${PSXRECOMP_ROOT}/runtime/src/stub_interpreter.c)
+     endif()
+ 
+-    add_executable(${target}
+-        ${PSXRECOMP_RUNTIME_SOURCES}
+-        ${mode_source}
+-        ${generated_sources}
+-        ${PSXRT_EXTRAS_SOURCES}
+-    )
++    if(ANDROID)
++        # Android: an APK cannot launch a normal executable. SDLActivity loads
++        # libmain.so and calls SDL_main (SDLActivity.getMainSharedObject /
++        # getMainFunction), so build the runtime as a shared object instead.
++        add_library(${target} SHARED
++            ${PSXRECOMP_RUNTIME_SOURCES}
++            ${mode_source}
++            ${generated_sources}
++            ${PSXRT_EXTRAS_SOURCES}
++        )
++    else()
++        add_executable(${target}
++            ${PSXRECOMP_RUNTIME_SOURCES}
++            ${mode_source}
++            ${generated_sources}
++            ${PSXRT_EXTRAS_SOURCES}
++        )
++    endif()
+     target_link_libraries(${target} PRIVATE chdr-static psx_texture_image_decode)
+     psxrecomp_sha256_file(${target})
+     set(_execution_contract
+@@ -1722,6 +1734,10 @@
+     else()
+         set(_psxrt_overlay_flavor 0)
+     endif()
++    if(ANDROID)
++        # SDLActivity loads "libmain.so"; the desktop exe name is irrelevant here.
++        set(_psxrt_exe_name "main")
++    endif()
+     set_target_properties(${target} PROPERTIES OUTPUT_NAME "${_psxrt_exe_name}")
+ 
+     # Publish the OVERLAY CODEGEN FLAVOR this target links with, for the same
