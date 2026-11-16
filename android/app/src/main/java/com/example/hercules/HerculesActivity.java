@@ -3,6 +3,7 @@ package com.example.hercules;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
@@ -70,7 +71,12 @@ public class HerculesActivity extends SDLActivity {
         JniBridge.setDataDir(runtimeDir.getAbsolutePath());
         super.onCreate(savedInstanceState);
         enterImmersiveMode();
-        // TODO: inject HerculesGameView overlay using approach (a) or (b) above.
+
+        // On-screen controls layered above SDL's surface. Touches outside the
+        // drawn controls fall through to the surface (key injection only).
+        HerculesGameView pad = new HerculesGameView(this);
+        addContentView(pad, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
     /**

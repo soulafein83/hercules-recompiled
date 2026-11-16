@@ -5,6 +5,9 @@ plugins { id 'com.android.application' version '8.7.2' }
 //   ./gradlew :app:assembleDebug -Phercules.internalResolution=720p
 def herculesInternalResolution =
         (project.findProperty("hercules.internalResolution") ?: "native").toString()
+// Display aspect: "4:3" (original), "16:9"/"21:9" (wider; 2D art stretches).
+def herculesAspectRatio =
+        (project.findProperty("hercules.aspectRatio") ?: "4:3").toString()
 
 android {
     namespace = "com.example.hercules"          // musi zgadzać się z Java package + manifest
@@ -21,6 +24,7 @@ android {
         // Runtime display settings are persisted in settings.toml and supersede
         // game.toml; RuntimeFiles.ensureSettings() writes this value there.
         buildConfigField "String", "INTERNAL_RESOLUTION", "\"${herculesInternalResolution}\""
+        buildConfigField "String", "ASPECT_RATIO", "\"${herculesAspectRatio}\""
 
         externalNativeBuild {
             cmake {

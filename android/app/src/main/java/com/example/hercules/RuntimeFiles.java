@@ -162,10 +162,11 @@ static void ensureSettings(File runtimeDir, String internalResolution) {
 
     if (text.trim().isEmpty()) {
         text = "[video]\nfullscreen = 1\ninternal_resolution = \""
-                + internalResolution + "\"\n";
+                + internalResolution + "\"\naspect_ratio = \"" + BuildConfig.ASPECT_RATIO + "\"\n";
     } else {
         text = setVideoKey(text, "fullscreen", "1");
         text = setVideoKey(text, "internal_resolution", "\"" + internalResolution + "\"");
+        text = setVideoKey(text, "aspect_ratio", "\"" + BuildConfig.ASPECT_RATIO + "\"");
     }
 
     try (OutputStream out = new FileOutputStream(f, false)) {
