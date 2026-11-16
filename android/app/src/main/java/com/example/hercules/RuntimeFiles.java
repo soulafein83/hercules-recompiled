@@ -162,11 +162,15 @@ static void ensureSettings(File runtimeDir, String internalResolution) {
 
     if (text.trim().isEmpty()) {
         text = "[video]\nfullscreen = 1\ninternal_resolution = \""
-                + internalResolution + "\"\naspect_ratio = \"" + BuildConfig.ASPECT_RATIO + "\"\n";
+                + internalResolution + "\"\naspect_ratio = \"" + BuildConfig.ASPECT_RATIO + "\"\n"
+                + "\n[audio]\nfrequency = 48000\n";
     } else {
-        text = setVideoKey(text, "fullscreen", "1");
-        text = setVideoKey(text, "internal_resolution", "\"" + internalResolution + "\"");
-        text = setVideoKey(text, "aspect_ratio", "\"" + BuildConfig.ASPECT_RATIO + "\"");
+        text = setSectionKey(text, "video", "fullscreen", "1");
+        text = setSectionKey(text, "video", "internal_resolution", "\"" + internalResolution + "\"");
+        text = setSectionKey(text, "video", "aspect_ratio", "\"" + BuildConfig.ASPECT_RATIO + "\"");
+        // The phone's audio device runs natively at 48 kHz; requesting 48 kHz
+        // removes SDL's 44.1->48 conversion (the SPU is resampled by the DRC).
+        text = setSectionKey(text, "audio", "frequency", "48000");
     }
 
     try (OutputStream out = new FileOutputStream(f, false)) {
@@ -176,21 +180,29 @@ static void ensureSettings(File runtimeDir, String internalResolution) {
     }
 }
 
-/** Replace {@code key = ...} in settings.toml, inserting it under [video] if absent. */
-private static String setVideoKey(String text, String key, String value) {
-    java.util.regex.Pattern line = java.util.regex.Pattern.compile(
-            "(?m)^[ \\t]*" + java.util.regex.Pattern.quote(key) + "[ \\t]*=.*$");
-    java.util.regex.Matcher m = line.matcher(text);
+/** Replace {@code key = ...} in the given TOML section, creating the section if absent. */
+private static String setSectionKey(String text, String section, String key, String value) {
     String assignment = key + " = " + value;
-    if (m.find()) {
-        return m.replaceFirst(java.util.regex.Matcher.quoteReplacement(assignment));
-    }
     java.util.regex.Matcher header = java.util.regex.Pattern
-            .compile("(?m)^\\[video\\][ \\t]*$").matcher(text);
-    if (header.find()) {
-        return text.substring(0, header.end()) + "\n" + assignment + text.substring(header.end());
+            .compile("(?m)^\\[" + java.util.regex.Pattern.quote(section) + "\\][ \\t]*$")
+            .matcher(text);
+    if (!header.find()) {
+        String base = text.isEmpty() || text.endsWith("\n") ? text : text + "\n";
+        return base + "\n[" + section + "]\n" + assignment + "\n";
     }
-    return text + "\n[video]\n" + assignment + "\n";
+    int start = header.end();
+    java.util.regex.Matcher next = java.util.regex.Pattern.compile("(?m)^\\[").matcher(text);
+    int end = next.find(start) ? next.start() : text.length();
+    String body = text.substring(start, end);
+    java.util.regex.Matcher line = java.util.regex.Pattern
+            .compile("(?m)^[ \\t]*" + java.util.regex.Pattern.quote(key) + "[ \\t]*=.*$")
+            .matcher(body);
+    if (line.find()) {
+        body = line.replaceFirst(java.util.regex.Matcher.quoteReplacement(assignment));
+    } else {
+        body = "\n" + assignment + body;
+    }
+    return text.substring(0, start) + body + text.substring(end);
 }
 
 private static String readFirstLine(File f) {
