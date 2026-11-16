@@ -1,0 +1,113 @@
+--- a/runtime/src/gpu_gl_renderer.c
++++ b/runtime/src/gpu_gl_renderer.c
+@@ -2339,10 +2339,82 @@
+     "void main(){ vec4 c=texelFetch(u_src,ivec2(gl_FragCoord.xy)-u_off,0);\n"
+     "  if(c.a<0.5) discard; frag=vec4(0.0); }\n";
+ 
++#if defined(__ANDROID__)
++#define PSX_GL_HAS_DUAL_SOURCE 0
++#else
++#define PSX_GL_HAS_DUAL_SOURCE 1
++#endif
++
++#if defined(__ANDROID__)
++/* GLSL 330 -> ESSL 300 (Android only has OpenGL ES). This keeps one shader
++ * source set for both backends. Changes: version + the precision qualifiers ES
++ * requires; drop `noperspective` (not in ES 3.0 — ES defaults to smooth); drop
++ * the dual-source `blend_factor` output (ES 3.0 has no dual-source blending). */
++static char *adapt_shader_for_gles(const char *src) {
++    if (!src) return NULL;
++    const char *body = src;
++    const char *v = strstr(src, "#version 330");
++    if (v) {
++        const char *nl = strchr(v, '\n');
++        body = nl ? nl + 1 : v + strlen(v);
++    }
++    static const char header[] =
++        "#version 300 es\n"
++        "precision highp float;\n"
++        "precision highp int;\n"
++        "precision highp sampler2D;\n"
++        "precision highp usampler2D;\n";
++    static const char kBlendAssign[] = "blend_factor =";
++    static const char kBlendOut[] = "out vec4 blend_factor;";
++    static const char kNoPersp[] = "noperspective ";
++    size_t cap = strlen(header) + 2 * strlen(body) + 64;
++    char *out = (char *)malloc(cap);
++    if (!out) return NULL;
++    size_t n = 0;
++    memcpy(out, header, sizeof(header) - 1);
++    n = sizeof(header) - 1;
++    for (const char *s = body; *s; ) {
++        const char *eol = strchr(s, '\n');
++        size_t len = eol ? (size_t)(eol - s) : strlen(s);
++        const char *assign = strstr(s, kBlendAssign);
++        if (assign && assign < s + len) {
++            /* whole-line dual-source assignment: drop it */
++        } else {
++            for (size_t i = 0; i < len; i++) {
++                if (len - i >= sizeof(kNoPersp) - 1 &&
++                    memcmp(s + i, kNoPersp, sizeof(kNoPersp) - 1) == 0) {
++                    i += sizeof(kNoPersp) - 2;
++                    continue;
++                }
++                if (len - i >= sizeof(kBlendOut) - 1 &&
++                    memcmp(s + i, kBlendOut, sizeof(kBlendOut) - 1) == 0) {
++                    i += sizeof(kBlendOut) - 2;
++                    continue;
++                }
++                out[n++] = s[i];
++            }
++            out[n++] = '\n';
++        }
++        if (!eol) break;
++        s = eol + 1;
++    }
++    out[n] = '\0';
++    return out;
++}
++#endif
++
+ static GLuint compile_shader(GLenum type, const char *src) {
++    const char *use = src;
++#if defined(__ANDROID__)
++    char *adapted = adapt_shader_for_gles(src);
++    if (adapted) use = adapted;
++#endif
+     GLuint s = p_glCreateShader(type);
+-    p_glShaderSource(s, 1, &src, NULL);
++    p_glShaderSource(s, 1, &use, NULL);
+     p_glCompileShader(s);
++#if defined(__ANDROID__)
++    free(adapted);
++#endif
+     GLint ok = 0; p_glGetShaderiv(s, PSXGL_COMPILE_STATUS, &ok);
+     if (!ok) { char log[1024]; log[0]=0; p_glGetShaderInfoLog(s, sizeof log, NULL, log);
+         fprintf(stdout, "psxrecomp: GL shader compile failed: %s\n", log);
+@@ -2354,7 +2426,7 @@
+     if (!v || !f) return 0;
+     GLuint p = p_glCreateProgram();
+     p_glAttachShader(p, v); p_glAttachShader(p, f);
+-    if (dual_source) {
++    if (dual_source && p_glBindFragDataLocationIndexed) {
+         p_glBindFragDataLocationIndexed(p, 0, 0, "frag");
+         p_glBindFragDataLocationIndexed(p, 0, 1, "blend_factor");
+     }
+@@ -3702,7 +3774,7 @@
+              * until a later GP0(E6h) actually enables destination masking. */
+             if (track_stencil) s_stencil_valid = 0;
+         }
+-    } else if (!check && semi == 4) {
++    } else if (!check && semi == 4 && PSX_GL_HAS_DUAL_SOURCE) {
+         /* Modes 0/1/3 can select opaque-vs-semi behavior per fragment with
+          * dual-source factors, so the whole painter-ordered batch is one draw.
+          * Mode 2 needs a different blend equation and stays on the conservative
+@@ -5978,7 +6050,7 @@
+     }
+ 
+     s_geo_prog  = build_program(GEO_VS, GEO_FS);
+-    s_tex_prog  = build_program_ex(TEX_VS, TEX_FS, 1);
++    s_tex_prog  = build_program_ex(TEX_VS, TEX_FS, PSX_GL_HAS_DUAL_SOURCE);
+     s_blit_prog = build_program(BLIT_VS, BLIT_FS);
+     s_blit_hi_prog = build_program(BLIT_VS_HI, BLIT_FS);
+     s_pack_prog = build_program(PACK_VS, PACK_FS);

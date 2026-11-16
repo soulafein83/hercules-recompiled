@@ -178,6 +178,56 @@ static void ensureSettings(File runtimeDir, String internalResolution) {
     } catch (IOException e) {
         Log.e(TAG, "cannot write " + f, e);
     }
+
+    ensureModState(runtimeDir);
+}
+
+/**
+ * First-run mod state. The runtime scans <runtime>/mods/bundled for the mod
+ * packages shipped in assets and applies <runtime>/mods/state.toml. We enable
+ * frame-blend (the presentation crossfade that takes the PAL 50 fps picture to
+ * the display refresh rate) — the GL renderer is required for it, see the
+ * renderer argument in HerculesActivity. Existing state is left alone so the
+ * in-game menu can change it.
+ */
+static void ensureModState(File runtimeDir) {
+    File mods = new File(runtimeDir, "mods");
+    File state = new File(mods, "state.toml");
+    if (state.isFile()) return;
+    if (!mods.isDirectory() && !mods.mkdirs()) {
+        Log.e(TAG, "cannot create " + mods);
+        return;
+    }
+    String t = "format_version = 2\n"
+            + "\n[[package]]\nid = \"hercules.hd-sprites\"\n"
+            + "\n[[package]]\nid = \"psx.enhancement.hd-textures\"\n"
+            + "\n[[package]]\nid = \"hercules.level-select\"\n"
+            + "\n[[package]]\nid = \"hercules.widescreen\"\n"
+            + "\n[[package]]\nid = \"hercules.skip-intro\"\n"
+            + "\n[[package]]\nid = \"psx.enhancement.cd-speed\"\n"
+            + "\n[[package]]\nid = \"hercules.frame-blend\"\n"
+            + "\n[[package]]\nid = \"hercules.ntsc-speed\"\n"
+            + "\n[[feature]]\npackage_id = \"hercules.hd-sprites\"\nid = \"hd-sprites\"\nenabled = false\n"
+            + "\n[[feature]]\npackage_id = \"psx.enhancement.hd-textures\"\nid = \"hd-textures\"\nenabled = false\n"
+            + "\n[[feature]]\npackage_id = \"hercules.level-select\"\nid = \"level-select\"\nenabled = false\n"
+            + "\n[feature.values]\nlevel = \"off\"\n"
+            + "\n[[feature]]\npackage_id = \"hercules.widescreen\"\nid = \"widescreen\"\nenabled = true\n"
+            + "\n[feature.values]\naspect = \"4:3\"\n"
+            + "\n[[feature]]\npackage_id = \"hercules.skip-intro\"\nid = \"skip-intro\"\nenabled = false\n"
+            + "\n[[feature]]\npackage_id = \"hercules.skip-intro\"\nid = \"skip-memcard\"\nenabled = false\n"
+            + "\n[[feature]]\npackage_id = \"hercules.skip-intro\"\nid = \"skip-fmv\"\nenabled = false\n"
+            + "\n[[feature]]\npackage_id = \"hercules.skip-intro\"\nid = \"direct-start\"\nenabled = false\n"
+            + "\n[feature.values]\nlevel = \"1\"\n"
+            + "\n[[feature]]\npackage_id = \"hercules.ntsc-speed\"\nid = \"ntsc-speed\"\nenabled = false\n"
+            + "\n[[feature]]\npackage_id = \"psx.enhancement.cd-speed\"\nid = \"cd-speed\"\nenabled = false\n"
+            + "\n[feature.values]\nmultiplier = \"4\"\n"
+            + "\n[[feature]]\npackage_id = \"hercules.frame-blend\"\nid = \"frame-blend\"\nenabled = true\n"
+            + "\n[feature.values]\nblend = \"linear\"\n";
+    try (OutputStream out = new FileOutputStream(state, false)) {
+        out.write(t.getBytes(StandardCharsets.UTF_8));
+    } catch (IOException e) {
+        Log.e(TAG, "cannot write " + state, e);
+    }
 }
 
 /** Replace {@code key = ...} in the given TOML section, creating the section if absent. */

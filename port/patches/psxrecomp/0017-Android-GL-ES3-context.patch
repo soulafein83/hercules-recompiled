@@ -1,0 +1,19 @@
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -2260,8 +2260,16 @@
+  * runtime requirements immediately before every GL window, because launcher
+  * teardown resets them and macOS otherwise supplies a legacy 2.1 context. */
+ static void configure_core_gl_context_attributes() {
++#if defined(__ANDROID__)
++    /* Android only exposes OpenGL ES. The GL renderer's GLSL 330 sources are
++     * adapted to ESSL 300 at shader-compile time (gpu_gl_renderer.c), so ask
++     * for an ES 3.0 context here. */
++    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
++    int major = 3, minor = 0;
++#else
+     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+     int major = 3, minor = 3;
++#endif
+ #if defined(PSX_OPENXR)
+     /* Opt-in headset context (docs/OPENXR_RENDERING.md). Ordinary GL launches
+      * keep the historic 3.3. The environment variable is PSX_OPENXR_ENABLE;

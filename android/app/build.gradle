@@ -97,6 +97,8 @@ tasks.register("stageRuntimeAssets", Copy) {
     }
     from("${herculesPortDir}/versions/SCES-00891/aot") { into "aot" }
     from("${herculesPortDir}/psxrecomp/bios/openbios.bin") { into "bios" }
+    // Preloaded mod packages; the runtime scans <runtime>/mods/bundled.
+    from("${herculesPortDir}/mods/preloaded/packages") { into "mods/bundled" }
 }
 
 android.sourceSets.main.assets.srcDirs += [runtimeAssetsRoot]
