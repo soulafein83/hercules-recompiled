@@ -1,0 +1,23 @@
+--- a/runtime/src/gpu_gl_renderer.c
++++ b/runtime/src/gpu_gl_renderer.c
+@@ -9248,11 +9248,17 @@
+     glDisable(GL_SCISSOR_TEST);
+     glDisable(GL_STENCIL_TEST);
+     glDisable(GL_DEPTH_TEST);
+-    /* host_osd bakes opaque panels (A=0xFF). Do not blend — PSX mode-2
+-     * REVERSE_SUBTRACT left armed across FMV present made toasts solid black. */
+-    glDisable(GL_BLEND);
++    /* Host OSD panels are usually opaque (A=0xFF), but the in-game menu canvas
++     * is translucent (dim background over the game + text). Blend it with
++     * straight alpha and reset the equation/function explicitly: a PSX mode-2
++     * REVERSE_SUBTRACT left armed made toasts solid black. */
++    glEnable(GL_BLEND);
+     if (p_glBlendEquationSeparate)
+         p_glBlendEquationSeparate(PSXGL_FUNC_ADD, PSXGL_FUNC_ADD);
++    if (p_glBlendFuncSeparate)
++        p_glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO);
++    else
++        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+     /* GL viewport origin is bottom-left. */
+     glViewport(vx, wh - vy - dh, dw, dh);
+     p_glUseProgram(s_present_prog);
