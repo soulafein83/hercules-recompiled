@@ -1,0 +1,19 @@
+--- a/runtime/src/gpu_vk_renderer.c
++++ b/runtime/src/gpu_vk_renderer.c
+@@ -246,7 +246,7 @@
+ static int              s_present_mode_req = 1;   /* 1 tear-free, 0 IMMEDIATE, -1 MAILBOX */
+ 
+ /* Per-frame sync (double-buffered command recording). */
+-#define VK_FRAMES 2
++#define VK_FRAMES 3
+ static VkCommandBuffer  s_cmd[VK_FRAMES];
+ static VkSemaphore      s_sem_acquire[VK_FRAMES];
+ static VkSemaphore      s_sem_render[VK_FRAMES];
+@@ -874,6 +874,7 @@
+             (unsigned)caps.currentTransform);
+ 
+     uint32_t img_count = caps.minImageCount + 1;
++    if (img_count < VK_FRAMES) img_count = VK_FRAMES;  /* one per in-flight frame */
+     if (caps.maxImageCount && img_count > caps.maxImageCount) img_count = caps.maxImageCount;
+ 
+     VkSwapchainCreateInfoKHR ci = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };

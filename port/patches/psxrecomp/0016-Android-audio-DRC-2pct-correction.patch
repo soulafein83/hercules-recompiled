@@ -1,0 +1,16 @@
+--- a/runtime/src/main.cpp
++++ b/runtime/src/main.cpp
+@@ -19496,6 +19496,13 @@
+                 cfg.source_rate = 44100.0;            /* SPU render rate */
+                 cfg.host_rate   = (double)have.freq;  /* actual device rate */
+                 cfg.target_ms   = (double)resolved_audio_buffer_ms;
++                /* The PAL guest can settle a little under 50 Hz on a phone
++                 * (measured ~49.3 Hz), i.e. the SPU produces ~1.3% fewer
++                 * samples per wall second than the 44.1 kHz host consumes.
++                 * The default +-0.5% DRC limit cannot bridge that, so the ring
++                 * drains and underruns. Allow +-2%: the resulting pitch/speed
++                 * shift is far below audibility and keeps the ring filled. */
++                cfg.max_correction = 0.02;
+                 if (rab_init(&s_drc, &cfg) == 0) s_drc_ready = true;
+             }
+             g_audio_host_rate = have.freq;

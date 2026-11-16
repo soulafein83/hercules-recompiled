@@ -95,6 +95,11 @@ Java_com_example_hercules_JniBridge_setDataDir(JNIEnv *env, jclass /*clazz*/, js
     // Rewind snapshots the whole machine every 15 frames (~12.5 s history); it
     // is a debug convenience and a large per-frame cost on a phone. Off by default.
     setenv("PSX_REWIND", "0", 1);
+    // TEMP test: NTSC 60 Hz timing on the PAL disc. 50 fps on a 120 Hz panel
+    // gives 2.4 refreshes/frame (judder); 60 fps gives exactly 2.
+    // PSX_FORCE_NTSC_TIMING would give 60 Hz (smooth 2:1 on 120 Hz) but this
+    // phone only reaches ~57 Hz at NTSC speed, so PAL 50 Hz stays the default.
+    // TEMP test: periodic cadence/audio stats in logcat (tag HerculesRT).
     env->ReleaseStringUTFChars(path, p);
 }
 

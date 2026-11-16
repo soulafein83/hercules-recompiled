@@ -44,7 +44,7 @@ set(HERCULES_ANDROID_COMPAT "${CMAKE_CURRENT_SOURCE_DIR}/compat/hercules_android
 set(HERCULES_GLES_COMPAT "${CMAKE_CURRENT_SOURCE_DIR}/compat/hercules_gles_compat.c")
 foreach(_hercules_shim_target psx-runtime psx-runtime-pgxp)
     if(TARGET ${_hercules_shim_target})
-        target_compile_options(${_hercules_shim_target} PRIVATE -include "${HERCULES_ANDROID_COMPAT}")
+        target_compile_options(${_hercules_shim_target} PRIVATE -O3 -include "${HERCULES_ANDROID_COMPAT}")
 
         # Desktop-GL entry points that gpu_gl_renderer.c calls directly but GLES
         # does not provide (glClearDepth, glGetTexImage). glReadBuffer comes from
