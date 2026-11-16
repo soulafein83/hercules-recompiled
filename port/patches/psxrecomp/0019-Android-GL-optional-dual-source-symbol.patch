@@ -1,0 +1,49 @@
+--- a/runtime/src/gpu_gl_renderer.c
++++ b/runtime/src/gpu_gl_renderer.c
+@@ -353,7 +353,9 @@
+     LOAD(p_glBindBuffer, "glBindBuffer");        LOAD(p_glBufferData, "glBufferData");
+     LOAD(p_glVertexAttribPointer, "glVertexAttribPointer");
+     LOAD(p_glEnableVertexAttribArray, "glEnableVertexAttribArray");
+-        LOAD(p_glBindFragDataLocationIndexed, "glBindFragDataLocationIndexed");
++    #if PSX_GL_HAS_DUAL_SOURCE
++    LOAD(p_glBindFragDataLocationIndexed, "glBindFragDataLocationIndexed");
++#endif
+     LOAD(p_glGenFramebuffers, "glGenFramebuffers"); LOAD(p_glBindFramebuffer, "glBindFramebuffer");
+     LOAD(p_glDeleteFramebuffers, "glDeleteFramebuffers");
+     LOAD(p_glFramebufferTexture2D, "glFramebufferTexture2D");
+@@ -6056,10 +6058,15 @@
+     s_pack_prog = build_program(PACK_VS, PACK_FS);
+     s_stencil_prog = build_program(PACK_VS, STENCIL_FS);
+     if (!s_geo_prog || !s_tex_prog || !s_blit_prog || !s_pack_prog || !s_stencil_prog ||
+-        !s_blit_hi_prog) return 0;
++        !s_blit_hi_prog) {
++        fprintf(stdout, "psxrecomp: GL init: program build failed geo=%u tex=%u blit=%u pack=%u stencil=%u blit_hi=%u\n",
++                (unsigned)s_geo_prog,(unsigned)s_tex_prog,(unsigned)s_blit_prog,
++                (unsigned)s_pack_prog,(unsigned)s_stencil_prog,(unsigned)s_blit_hi_prog);
++        return 0;
++    }
+ 
+     s_conv = (uint32_t *)malloc((size_t)VRAM_W * VRAM_H * sizeof(uint32_t));
+-    if (!s_conv) return 0;
++    if (!s_conv) { fprintf(stdout, "psxrecomp: GL init: conv buffer alloc failed\n"); return 0; }
+ 
+     s_up_tex      = make_tex(GL_RGBA8, VRAM_W, VRAM_H, GL_RGBA, GL_UNSIGNED_BYTE);
+     s_raw_tex     = make_tex(PSXGL_R16UI, VRAM_W, VRAM_H, PSXGL_RED_INTEGER, GL_UNSIGNED_SHORT);
+@@ -6082,7 +6089,7 @@
+      * allocate it (out of memory, or a limit it under-reported). Only a
+      * failure at 1x takes the whole backend down, as before. */
+     while (!alloc_hr_targets(s_hr_scale)) {
+-        if (s_hr_scale <= 1) return 0;
++        if (s_hr_scale <= 1) { fprintf(stdout, "psxrecomp: GL init: hr surface failed at 1x\n"); return 0; }
+         fprintf(stdout, "psxrecomp: GL hr surface %dx%d (%dx) failed to allocate; "
+                 "retrying at %dx\n", VRAM_W * s_hr_scale, VRAM_H * s_hr_scale,
+                 s_hr_scale, s_hr_scale - 1);
+@@ -6090,7 +6097,7 @@
+         s_out_scale = s_hr_scale;
+         s_scale_alloc_retries++;
+     }
+-    if (!make_fbo(&s_raw_fbo, s_raw_tex, 0)) return 0;
++    if (!make_fbo(&s_raw_fbo, s_raw_tex, 0)) { fprintf(stdout, "psxrecomp: GL init: raw FBO failed\n"); return 0; }
+     if (s_hiw) {
+         /* The window's copy staging; grown on demand (hiw_mirror_copy). */
+         s_hiw_scratch_w = s_hiw_scratch_h = HIW_ALIGN;
